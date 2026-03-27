@@ -101,6 +101,17 @@ ensure_workdir_exists() {
   sudo mkdir -p "${TTYD_WORKDIR}"
 }
 
+normalize_ttyd_extra_args() {
+  local cleaned
+
+  cleaned="$(printf '%s' "${TTYD_EXTRA_ARGS}" | sed -E 's/(^|[[:space:]])(--readonly|-R|--writable|-W)([[:space:]]|$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  if [ "${cleaned}" != "${TTYD_EXTRA_ARGS}" ]; then
+    log "Sanitized TTYD_EXTRA_ARGS by removing writable/readonly flags to enforce deploy policy"
+  fi
+
+  TTYD_EXTRA_ARGS="${cleaned}"
+}
+
 wait_for_local_ttyd_health() {
   local retries="${1:-30}"
   local delay_seconds="${2:-1}"
@@ -191,7 +202,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/core/ttyd/ttyd.env
-ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --writable --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --cwd "${TTYD_WORKDIR}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} ${TTYD_EXEC_CMD}'
+ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --cwd "${TTYD_WORKDIR}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} --writable ${TTYD_EXEC_CMD}'
 Restart=always
 RestartSec=2
 
@@ -274,6 +285,7 @@ log "[3/8] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}"
 
 log "[4/8] Writing and enabling systemd runtime for ttyd"
+normalize_ttyd_extra_args
 write_env_file
 write_systemd_unit
 sudo systemctl daemon-reload
