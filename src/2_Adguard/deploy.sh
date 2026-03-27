@@ -158,7 +158,16 @@ disable_netbird_dns_usage() {
 
 	sleep 1
 	if is_netbird_bound_to_port_53; then
-		fail "NetBird still appears bound to port 53 after --disable-dns"
+		log "NetBird still appears bound to port 53 after --disable-dns; forcing DNS resolver to 127.0.0.1:22053"
+		sudo netbird down >/dev/null 2>&1 || true
+		if ! sudo netbird up --dns-resolver-address 127.0.0.1:22053; then
+			fail "Failed to restart NetBird with --dns-resolver-address 127.0.0.1:22053"
+		fi
+
+		sleep 1
+		if is_netbird_bound_to_port_53; then
+			fail "NetBird still appears bound to port 53 after resolver port override"
+		fi
 	fi
 }
 

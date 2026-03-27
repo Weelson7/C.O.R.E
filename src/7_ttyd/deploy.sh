@@ -20,6 +20,7 @@ SYSTEMD_UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-7681}"
 TTYD_MAX_CLIENTS="${TTYD_MAX_CLIENTS:-10}"
 TTYD_EXEC_CMD="${TTYD_EXEC_CMD:-/bin/bash}"
+TTYD_WORKDIR="${TTYD_WORKDIR:-/C.O.R.E}"
 TTYD_EXTRA_ARGS="${TTYD_EXTRA_ARGS:-}"
 TTYD_BIN=""
 
@@ -91,6 +92,15 @@ ensure_numeric_port() {
   fi
 }
 
+ensure_workdir_exists() {
+  if [ -d "${TTYD_WORKDIR}" ]; then
+    return 0
+  fi
+
+  log "Working directory ${TTYD_WORKDIR} does not exist; creating it"
+  sudo mkdir -p "${TTYD_WORKDIR}"
+}
+
 validate_resolved_ip() {
   local resolved_ip="$1"
 
@@ -141,6 +151,7 @@ write_env_file() {
 TTYD_BIN=${TTYD_BIN}
 PUBLISHED_HTTP_PORT=${PUBLISHED_HTTP_PORT}
 TTYD_MAX_CLIENTS=${TTYD_MAX_CLIENTS}
+TTYD_WORKDIR=${TTYD_WORKDIR}
 TTYD_EXTRA_ARGS=${TTYD_EXTRA_ARGS}
 TTYD_EXEC_CMD=${TTYD_EXEC_CMD}
 EOF
@@ -158,7 +169,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/core/ttyd/ttyd.env
-ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} ${TTYD_EXEC_CMD}'
+ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --cwd "${TTYD_WORKDIR}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} ${TTYD_EXEC_CMD}'
 Restart=always
 RestartSec=2
 
@@ -218,6 +229,7 @@ require_cmd awk
 require_cmd grep
 
 ensure_numeric_port
+ensure_workdir_exists
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
 ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
