@@ -169,23 +169,53 @@ write_frontend_assets() {
   sudo chmod -R 755 "${WEB_ROOT}"
 }
 
-validate_resolved_ip() {
-  local resolved_ip="$1"
+validate_resolved_ip_list() {
+  local resolved_ips="$1"
+  local ip
+  local found="false"
 
-  if [ "${resolved_ip}" = "${NETBIRD_DEVICE_IP}" ]; then
-    return 0
-  fi
+  while IFS= read -r ip; do
+    [ -n "${ip}" ] || continue
+    if [ "${ip}" = "${NETBIRD_DEVICE_IP}" ]; then
+      found="true"
+      break
+    fi
+    if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
+      found="true"
+      break
+    fi
+  done <<EOF
+${resolved_ips}
+EOF
 
-  if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${resolved_ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
-    log "DNS currently resolves to configured failover IP (${NETBIRD_FAILOVER_IP})"
-    return 0
-  fi
+  [ "${found}" = "true" ] || fail "DNS mismatch for ${DOMAIN}: none of the resolved IPs match expected mesh IP(s). Resolved: ${resolved_ips//$'\n'/, }"
+}
 
-  if [ -n "${NETBIRD_FAILOVER_IP}" ]; then
-    fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP} or ${NETBIRD_FAILOVER_IP}, got ${resolved_ip}"
-  fi
+wait_for_ingress_api_health() {
+  local retries="$1"
+  local delay="$2"
+  local mode="$3"
+  local i
 
-  fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
+  for i in $(seq 1 "${retries}"); do
+    if [ "${mode}" = "dns" ]; then
+      if curl --silent --show-error --fail --insecure \
+        -u "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
+        "https://${DOMAIN}/api/sites" >/dev/null; then
+        return 0
+      fi
+    else
+      if curl --silent --show-error --fail --insecure \
+        -u "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
+        --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
+        "https://${DOMAIN}/api/sites" >/dev/null; then
+        return 0
+      fi
+    fi
+    sleep "${delay}"
+  done
+
+  return 1
 }
 
 wait_for_local_api_health() {
@@ -332,7 +362,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass         http://127.0.0.1:${API_PORT}/;
+      proxy_pass         http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Real-IP         \$remote_addr;
@@ -376,12 +406,11 @@ log "[8/8] Verifying mesh DNS and runtime endpoint"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
-resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
 dns_validated="false"
-if [ -n "${resolved_ip}" ]; then
-  if validate_resolved_ip "${resolved_ip}"; then
-    dns_validated="true"
-  fi
+resolved_ips="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1}' | awk '!seen[$1]++' || true)"
+if [ -n "${resolved_ips}" ]; then
+  validate_resolved_ip_list "${resolved_ips}"
+  dns_validated="true"
 else
   if [ "${STRICT_DNS_VALIDATION}" = "true" ]; then
     fail "DNS lookup failed for ${DOMAIN}; configure AdGuard and Netbird nameserver group"
@@ -390,13 +419,19 @@ else
 fi
 
 if [ "${dns_validated}" = "true" ]; then
-  curl --silent --show-error --fail --insecure "https://${DOMAIN}/api/sites" >/dev/null \
-    || fail "Ingress health check failed for https://${DOMAIN}/api/sites"
+  if ! wait_for_ingress_api_health "${API_HEALTH_RETRIES}" "${API_HEALTH_DELAY_SECONDS}" "dns"; then
+    log "Authenticated ingress check failed via DNS; showing diagnostics"
+    sudo docker logs --tail 80 "${CONTAINER_NAME}" || true
+    sudo tail -n 80 /var/log/nginx/core-indexer.error.log || true
+    fail "Ingress health check failed for https://${DOMAIN}/api/sites"
+  fi
 else
-  curl --silent --show-error --fail --insecure \
-    --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
-    "https://${DOMAIN}/api/sites" >/dev/null \
-    || fail "Ingress health check failed for https://${DOMAIN}/api/sites using NETBIRD_DEVICE_IP override"
+  if ! wait_for_ingress_api_health "${API_HEALTH_RETRIES}" "${API_HEALTH_DELAY_SECONDS}" "resolve"; then
+    log "Authenticated ingress check failed with NETBIRD_DEVICE_IP override; showing diagnostics"
+    sudo docker logs --tail 80 "${CONTAINER_NAME}" || true
+    sudo tail -n 80 /var/log/nginx/core-indexer.error.log || true
+    fail "Ingress health check failed for https://${DOMAIN}/api/sites using NETBIRD_DEVICE_IP override"
+  fi
 fi
 
 echo
