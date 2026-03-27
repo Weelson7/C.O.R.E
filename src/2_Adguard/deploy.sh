@@ -471,7 +471,7 @@ apply_rewrites_via_api() {
 	local ip
 	local payload
 	local existing_rewrites
-	local stale_ip
+	local old_answer
 
 	ensure_value ADGUARD_ADMIN_USER "Enter AdGuard admin username (for rewrite API)"
 	ensure_secret_value ADGUARD_ADMIN_PASSWORD "Enter AdGuard admin password (for rewrite API)"
@@ -486,16 +486,14 @@ apply_rewrites_via_api() {
 		ip="${REWRITE_IPS[${idx}]}"
 		payload="{\"domain\":\"${host}\",\"answer\":\"${ip}\"}"
 
-		while IFS= read -r stale_ip; do
-			[ -n "${stale_ip}" ] || continue
-			if [ "${stale_ip}" = "${ip}" ]; then
-				continue
-			fi
+		# Enforce exactly one rewrite per managed host to avoid flapping/Network changed errors.
+		while IFS= read -r old_answer; do
+			[ -n "${old_answer}" ] || continue
 			curl --silent --show-error --fail \
 				-u "${ADGUARD_ADMIN_USER}:${ADGUARD_ADMIN_PASSWORD}" \
 				-H 'Content-Type: application/json' \
 				-X POST \
-				-d "{\"domain\":\"${host}\",\"answer\":\"${stale_ip}\"}" \
+				-d "{\"domain\":\"${host}\",\"answer\":\"${old_answer}\"}" \
 				"http://127.0.0.1:${ADMIN_PANEL_PORT}/control/rewrite/delete" >/dev/null || true
 		done < <(printf '%s' "${existing_rewrites}" | jq -r --arg host "${host}" '.[] | select(.domain == $host) | .answer')
 
