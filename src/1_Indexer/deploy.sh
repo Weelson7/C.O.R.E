@@ -224,6 +224,7 @@ require_cmd curl
 require_cmd rsync
 require_cmd htpasswd
 resolve_compose_cmd
+[ -n "${CONTAINER_NAME}" ] || fail "Container name must not be empty"
 
 sudo systemctl enable docker
 sudo systemctl restart docker
@@ -357,6 +358,8 @@ sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 log "[7/8] Building and starting containerized API"
+"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --build
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
