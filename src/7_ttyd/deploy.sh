@@ -101,6 +101,28 @@ ensure_workdir_exists() {
   sudo mkdir -p "${TTYD_WORKDIR}"
 }
 
+wait_for_local_ttyd_health() {
+  local retries="${1:-30}"
+  local delay_seconds="${2:-1}"
+  local i
+  local endpoint
+  local status_code
+
+  for i in $(seq 1 "${retries}"); do
+    for endpoint in "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" "http://localhost:${PUBLISHED_HTTP_PORT}/"; do
+      status_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "${endpoint}" 2>/dev/null || true)"
+      case "${status_code}" in
+        200|301|302|401|403)
+          return 0
+          ;;
+      esac
+    done
+    sleep "${delay_seconds}"
+  done
+
+  return 1
+}
+
 validate_resolved_ip() {
   local resolved_ip="$1"
 
@@ -261,8 +283,12 @@ log "[5/8] Verifying local ttyd health"
 service_state="$(sudo systemctl is-active "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${service_state}" = "active" ] || fail "Service ${SERVICE_NAME} is not active"
 
-curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" >/dev/null \
-  || fail "ttyd local health check failed"
+if ! wait_for_local_ttyd_health 45 1; then
+  log "ttyd local health check did not pass in time; dumping diagnostics"
+  sudo ss -lntp | grep -E "(:${PUBLISHED_HTTP_PORT}[[:space:]]|:${PUBLISHED_HTTP_PORT}$)" || true
+  sudo journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
+  fail "ttyd local health check failed"
+fi
 
 log "[6/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
