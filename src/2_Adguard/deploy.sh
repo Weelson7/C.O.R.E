@@ -26,11 +26,9 @@ ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/downloa
 ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
 ADGUARD_ADMIN_CONTAINER_PORT="${ADGUARD_ADMIN_CONTAINER_PORT:-3000}"
 ADGUARD_FALLBACK_PANEL_PORT="${ADGUARD_FALLBACK_PANEL_PORT:-3000}"
-ADGUARD_DNS_PORT="${ADGUARD_DNS_PORT:-54}"
 PUBLISH_HTTPS_PORT="${PUBLISH_HTTPS_PORT:-false}"
 ADGUARD_HTTPS_PORT="${ADGUARD_HTTPS_PORT:-443}"
 ALLOW_UFW_ADMIN_PORT="${ALLOW_UFW_ADMIN_PORT:-true}"
-KEEP_NETBIRD_DNS_ON_53="${KEEP_NETBIRD_DNS_ON_53:-true}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 COMPOSE_CMD=()
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
@@ -152,11 +150,6 @@ is_port_listening_udp() {
 }
 
 disable_systemd_resolved_stub_listener() {
-	if [ "${ADGUARD_DNS_PORT}" != "53" ]; then
-		log "Skipping systemd-resolved DNSStubListener changes because ADGUARD_DNS_PORT=${ADGUARD_DNS_PORT}"
-		return 0
-	fi
-
 	local dropin_dir="/etc/systemd/resolved.conf.d"
 	local dropin_file="${dropin_dir}/99-core-adguard.conf"
 
@@ -185,11 +178,6 @@ is_netbird_bound_to_port_53() {
 }
 
 disable_netbird_dns_usage() {
-	if [ "${KEEP_NETBIRD_DNS_ON_53}" = "true" ]; then
-		log "Keeping NetBird DNS on port 53 (KEEP_NETBIRD_DNS_ON_53=true)"
-		return 0
-	fi
-
 	if ! command -v netbird >/dev/null 2>&1; then
 		return 0
 	fi
@@ -232,21 +220,21 @@ scan_runtime_ports() {
 		panel_ok="yes"
 	fi
 
-	if is_port_listening_tcp "${ADGUARD_DNS_PORT}"; then
+	if is_port_listening_tcp 53; then
 		dns_tcp_ok="yes"
 	fi
 
-	if is_port_listening_udp "${ADGUARD_DNS_PORT}"; then
+	if is_port_listening_udp 53; then
 		dns_udp_ok="yes"
 	fi
 
-	log "Scan: tcp/${ADMIN_PANEL_PORT}=${panel_ok}, tcp/${ADGUARD_DNS_PORT}=${dns_tcp_ok}, udp/${ADGUARD_DNS_PORT}=${dns_udp_ok}"
+	log "Scan: tcp/${ADMIN_PANEL_PORT}=${panel_ok}, tcp/53=${dns_tcp_ok}, udp/53=${dns_udp_ok}"
 }
 
 query_dns_a() {
 	local host="$1"
 
-	dig +time=2 +tries=1 +short @127.0.0.1 -p "${ADGUARD_DNS_PORT}" "${host}" A 2>/dev/null | awk 'NF {print; exit}'
+	dig +time=2 +tries=1 +short @127.0.0.1 -p 53 "${host}" A 2>/dev/null | awk 'NF {print; exit}'
 }
 
 download_adguard_home() {
@@ -283,26 +271,28 @@ EOF
 
 write_compose_file() {
 	{
-		printf '%s\n' \
-			"services:" \
-			"  adguard:" \
-			"    container_name: ${SERVICE_NAME}" \
-			"    image: ${IMAGE_TAG}" \
-			"    restart: unless-stopped" \
-			"    ports:" \
-			"      - \"${ADGUARD_DNS_PORT}:53/tcp\"" \
-			"      - \"${ADGUARD_DNS_PORT}:53/udp\"" \
-			"      - \"${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp\""
+		cat <<EOF
+services:
+  adguard:
+    container_name: ${SERVICE_NAME}
+    image: ${IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
+EOF
 		if [ "${ADGUARD_FALLBACK_PANEL_PORT}" != "${ADMIN_PANEL_PORT}" ]; then
 			echo "      - \"${ADGUARD_FALLBACK_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp\""
 		fi
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
 			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
 		fi
-		printf '%s\n' \
-			"    volumes:" \
-			"      - ${WORK_DIR}:/opt/adguardhome/work" \
-			"      - ${CONF_DIR}:/opt/adguardhome/conf"
+		cat <<EOF
+    volumes:
+      - ${WORK_DIR}:/opt/adguardhome/work
+      - ${CONF_DIR}:/opt/adguardhome/conf
+EOF
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
 }
 
@@ -422,7 +412,7 @@ wait_for_setup_completion() {
 
 	log "Waiting for setup completion"
 	log "Open http://localhost:${ADMIN_PANEL_PORT} and complete the AdGuard Home setup wizard."
-	log "Ensure DNS is enabled in AdGuard; host publishes DNS on port ${ADGUARD_DNS_PORT} (tcp+udp)."
+	log "Ensure DNS is configured to listen on port 53 (tcp+udp)."
 
 	while true; do
 		scan_runtime_ports
@@ -447,8 +437,8 @@ wait_for_setup_completion() {
 					continue
 				fi
 
-				if ! is_port_listening_tcp "${ADGUARD_DNS_PORT}" || ! is_port_listening_udp "${ADGUARD_DNS_PORT}"; then
-					log "Port ${ADGUARD_DNS_PORT} is not listening on both tcp and udp yet."
+				if ! is_port_listening_tcp 53 || ! is_port_listening_udp 53; then
+					log "Port 53 is not listening on both tcp and udp yet."
 					continue
 				fi
 
@@ -535,8 +525,8 @@ final_validation() {
 	[ "${state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
 	curl -fsS -o /dev/null "http://127.0.0.1:${ADMIN_PANEL_PORT}" || fail "Control panel is not reachable on localhost:${ADMIN_PANEL_PORT}"
-	is_port_listening_tcp "${ADGUARD_DNS_PORT}" || fail "Port ${ADGUARD_DNS_PORT}/tcp is not listening"
-	is_port_listening_udp "${ADGUARD_DNS_PORT}" || fail "Port ${ADGUARD_DNS_PORT}/udp is not listening"
+	is_port_listening_tcp 53 || fail "Port 53/tcp is not listening"
+	is_port_listening_udp 53 || fail "Port 53/udp is not listening"
 
 	for idx in "${!REWRITE_HOSTS[@]}"; do
 		host="${REWRITE_HOSTS[${idx}]}"
