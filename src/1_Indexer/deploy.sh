@@ -19,6 +19,7 @@ NGINX_SITE_LINK="/etc/nginx/sites-enabled/index.core"
 WEB_ROOT="/var/www/core-indexer"
 API_PORT="${API_PORT:-5001}"
 HTPASSWD_FILE="/etc/nginx/.htpasswd_core"
+HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_SOURCE_DIR="${API_SOURCE_DIR:-${SCRIPT_DIR}}"
 API_ENTRYPOINT="${API_ENTRYPOINT:-${API_SOURCE_DIR}/app.py}"
@@ -29,6 +30,7 @@ DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
 IMAGE_TAG="${IMAGE_TAG:-core/indexer:local}"
 CONTAINER_NAME="core-indexer"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
+COMPOSE_CMD=()
 
 log() {
   echo "[core-indexer] $*"
@@ -61,6 +63,42 @@ ensure_value() {
   done
 
   printf -v "${var_name}" '%s' "${current_value}"
+}
+
+ensure_secret_value() {
+  local var_name="$1"
+  local prompt="$2"
+  local current_value="${!var_name:-}"
+
+  while [ -z "${current_value}" ]; do
+    read -r -s -p "${prompt}: " current_value
+    echo
+  done
+
+  printf -v "${var_name}" '%s' "${current_value}"
+}
+
+resolve_compose_cmd() {
+  if sudo docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker-compose)
+    return 0
+  fi
+
+  fail "No Docker Compose command available after installation"
+}
+
+install_container_stack() {
+  if sudo apt install -y docker.io docker-compose-plugin; then
+    return 0
+  fi
+
+  log "Package docker-compose-plugin unavailable; falling back to docker-compose"
+  sudo apt install -y docker.io docker-compose
 }
 
 write_fallback_api() {
@@ -137,10 +175,12 @@ require_cmd awk
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
+ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync docker.io docker-compose-plugin
+sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync
+install_container_stack
 
 require_cmd mkcert
 require_cmd nginx
@@ -148,7 +188,7 @@ require_cmd docker
 require_cmd curl
 require_cmd rsync
 require_cmd htpasswd
-sudo docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available"
+resolve_compose_cmd
 
 sudo systemctl enable docker
 sudo systemctl restart docker
@@ -221,9 +261,9 @@ EOF
 
 log "[5/8] Enforcing ingress authentication baseline"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
-  sudo htpasswd -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 else
-  sudo htpasswd "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 fi
 sudo chmod 640 "${HTPASSWD_FILE}"
 
@@ -282,7 +322,7 @@ sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 log "[7/8] Building and starting containerized API"
-sudo docker compose -f "${COMPOSE_FILE}" up -d --build
+"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --build
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${CONTAINER_NAME} is not running"
@@ -303,4 +343,4 @@ echo
 log "Deployment complete and container runtime checks passed"
 log "URL: https://${DOMAIN}"
 log "Container logs: sudo docker logs -f ${CONTAINER_NAME}"
-log "Compose stack: sudo docker compose -f ${COMPOSE_FILE} ps"
+log "Compose stack: ${COMPOSE_CMD[*]} -f ${COMPOSE_FILE} ps"
