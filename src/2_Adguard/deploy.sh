@@ -109,6 +109,30 @@ is_port_listening_udp() {
 	ss -lnu 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
 }
 
+disable_systemd_resolved_stub_listener() {
+	local dropin_dir="/etc/systemd/resolved.conf.d"
+	local dropin_file="${dropin_dir}/99-core-adguard.conf"
+
+	if ! systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+		log "systemd-resolved service not found; skipping DNS stub listener tuning"
+		return 0
+	fi
+
+	log "Disabling systemd-resolved DNSStubListener to free host port 53"
+	sudo mkdir -p "${dropin_dir}"
+	sudo tee "${dropin_file}" >/dev/null <<'EOF'
+[Resolve]
+DNSStubListener=no
+EOF
+
+	sudo systemctl restart systemd-resolved
+	sleep 1
+
+	if is_port_listening_tcp 53 || is_port_listening_udp 53; then
+		log "Port 53 is still in use after systemd-resolved restart; another service may be bound to it"
+	fi
+}
+
 scan_runtime_ports() {
 	local panel_ok="no"
 	local dns_tcp_ok="no"
@@ -326,7 +350,7 @@ final_validation() {
 	done
 }
 
-log "[1/7] Installing deployment dependencies"
+log "[1/8] Installing deployment dependencies"
 ensure_ubuntu
 require_cmd sudo
 require_cmd apt
@@ -347,21 +371,24 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/7] Using single-node runtime mode"
+log "[2/8] Applying DNS stub-listener mitigation"
+disable_systemd_resolved_stub_listener
+
+log "[3/8] Using single-node runtime mode"
 
 sudo mkdir -p "${INSTALL_DIR}" "${WORK_DIR}" "${CONF_DIR}"
 
-log "[3/7] Downloading AdGuard Home"
+log "[4/8] Downloading AdGuard Home"
 download_adguard_home
 write_dockerfile
 
-log "[4/7] Starting container runtime"
+log "[5/8] Starting container runtime"
 start_single
 
-log "[5/7] Waiting for setup wizard completion"
+log "[6/8] Waiting for setup wizard completion"
 wait_for_setup_completion
 
-log "[6/7] Capturing and validating DNS rewrites"
+log "[7/8] Capturing and validating DNS rewrites"
 capture_rewrite_targets
 if [ "${#REWRITE_HOSTS[@]}" -eq 0 ]; then
 	log "No rewrites requested for validation in this run."
@@ -369,7 +396,7 @@ else
 	validate_each_rewrite_loop
 fi
 
-log "[7/7] Running final validation"
+log "[8/8] Running final validation"
 final_validation
 
 echo
