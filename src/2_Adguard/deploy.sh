@@ -20,6 +20,8 @@ CONF_DIR="${INSTALL_DIR}/conf"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
+DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
+COMPOSE_CMD=()
 
 declare -a REWRITE_HOSTS=()
 declare -a REWRITE_IPS=()
@@ -35,6 +37,46 @@ fail() {
 
 require_cmd() {
 	command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+resolve_compose_cmd() {
+	if sudo docker compose version >/dev/null 2>&1; then
+		COMPOSE_CMD=(sudo docker compose)
+		return 0
+	fi
+
+	fail "Docker Compose v2 plugin is not available after installation"
+}
+
+install_compose_plugin_manually() {
+	local arch
+	local plugin_arch
+	local plugin_dir="/usr/local/lib/docker/cli-plugins"
+	local plugin_path="${plugin_dir}/docker-compose"
+	local plugin_url=""
+
+	arch="$(uname -m)"
+	case "${arch}" in
+		x86_64|amd64) plugin_arch="x86_64" ;;
+		aarch64|arm64) plugin_arch="aarch64" ;;
+		*) fail "Unsupported architecture for compose plugin fallback: ${arch}" ;;
+	esac
+
+	plugin_url="https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_PLUGIN_VERSION}/docker-compose-linux-${plugin_arch}"
+
+	sudo mkdir -p "${plugin_dir}"
+	sudo curl -fsSL "${plugin_url}" -o "${plugin_path}"
+	sudo chmod +x "${plugin_path}"
+}
+
+install_container_stack() {
+	if sudo apt install -y docker.io docker-compose-plugin; then
+		return 0
+	fi
+
+	log "Package docker-compose-plugin unavailable; installing Docker Compose plugin manually"
+	sudo apt install -y docker.io
+	install_compose_plugin_manually
 }
 
 ensure_ubuntu() {
@@ -150,7 +192,7 @@ start_single() {
 	write_compose_file
 
 	sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
-	sudo docker compose -f "${COMPOSE_FILE}" up -d
+	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
 	local state
 	state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
@@ -290,7 +332,8 @@ require_cmd sudo
 require_cmd apt
 
 sudo apt update -y
-sudo apt install -y ca-certificates curl tar docker.io docker-compose-plugin dnsutils
+sudo apt install -y ca-certificates curl tar dnsutils
+install_container_stack
 
 require_cmd curl
 require_cmd tar
@@ -299,6 +342,7 @@ require_cmd dig
 require_cmd ss
 require_cmd awk
 require_cmd grep
+resolve_compose_cmd
 
 sudo systemctl enable docker
 sudo systemctl restart docker

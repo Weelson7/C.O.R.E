@@ -30,6 +30,7 @@ DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
 IMAGE_TAG="${IMAGE_TAG:-core/indexer:local}"
 CONTAINER_NAME="core-indexer"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
+STRICT_DNS_VALIDATION="${STRICT_DNS_VALIDATION:-false}"
 COMPOSE_CMD=()
 API_HEALTH_RETRIES="${API_HEALTH_RETRIES:-30}"
 API_HEALTH_DELAY_SECONDS="${API_HEALTH_DELAY_SECONDS:-2}"
@@ -376,10 +377,27 @@ require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
 resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
-[ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard and Netbird nameserver group"
-validate_resolved_ip "${resolved_ip}"
+dns_validated="false"
+if [ -n "${resolved_ip}" ]; then
+  if validate_resolved_ip "${resolved_ip}"; then
+    dns_validated="true"
+  fi
+else
+  if [ "${STRICT_DNS_VALIDATION}" = "true" ]; then
+    fail "DNS lookup failed for ${DOMAIN}; configure AdGuard and Netbird nameserver group"
+  fi
+  log "DNS for ${DOMAIN} is not ready yet. Continuing with direct ingress check via NETBIRD_DEVICE_IP (${NETBIRD_DEVICE_IP})."
+fi
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/api/sites" >/dev/null || fail "Ingress health check failed for https://${DOMAIN}/api/sites"
+if [ "${dns_validated}" = "true" ]; then
+  curl --silent --show-error --fail --insecure "https://${DOMAIN}/api/sites" >/dev/null \
+    || fail "Ingress health check failed for https://${DOMAIN}/api/sites"
+else
+  curl --silent --show-error --fail --insecure \
+    --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
+    "https://${DOMAIN}/api/sites" >/dev/null \
+    || fail "Ingress health check failed for https://${DOMAIN}/api/sites using NETBIRD_DEVICE_IP override"
+fi
 
 echo
 log "Deployment complete and container runtime checks passed"
