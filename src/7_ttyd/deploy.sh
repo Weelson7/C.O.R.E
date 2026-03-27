@@ -14,12 +14,9 @@ set -euo pipefail
 
 SERVICE_NAME="core-ttyd"
 DOMAIN="ttyd.core"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 INSTALL_DIR="/opt/core/ttyd"
 ENV_FILE="${INSTALL_DIR}/ttyd.env"
 SYSTEMD_UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-WEB_ROOT="/var/www/core-ttyd"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-7681}"
 TTYD_MAX_CLIENTS="${TTYD_MAX_CLIENTS:-10}"
 TTYD_EXEC_CMD="${TTYD_EXEC_CMD:-/bin/bash}"
@@ -34,7 +31,6 @@ NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
 HTPASSWD_FILE="/etc/nginx/.htpasswd_core_ttyd"
 HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
-BRANDING_LOGO_SOURCE="${REPO_ROOT}/Docs/Branding/logo.png"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
@@ -258,31 +254,17 @@ server {
     auth_basic           "C.O.R.E. - restricted";
     auth_basic_user_file ${HTPASSWD_FILE};
 
-    root ${WEB_ROOT};
-
-    location = / {
-      try_files /index.html =404;
-    }
-
-    location = /terminal {
-      return 302 /terminal/;
-    }
-
-    location /terminal/ {
-      proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT}/;
-      proxy_http_version 1.1;
-      proxy_set_header   Host              \$host;
-      proxy_set_header   X-Real-IP         \$remote_addr;
-      proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
-      proxy_set_header   X-Forwarded-Proto \$scheme;
-      proxy_set_header   Upgrade           \$http_upgrade;
-      proxy_set_header   Connection        "upgrade";
-      proxy_read_timeout 3600;
-      proxy_send_timeout 3600;
-    }
-
     location / {
-      try_files \$uri \$uri/ /index.html;
+        proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
@@ -292,183 +274,7 @@ server {
     access_log /var/log/nginx/core-ttyd.access.log;
     error_log  /var/log/nginx/core-ttyd.error.log warn;
 }
-
-write_brand_shell() {
-  sudo mkdir -p "${WEB_ROOT}"
-
-  if [ -f "${BRANDING_LOGO_SOURCE}" ]; then
-    sudo cp -f "${BRANDING_LOGO_SOURCE}" "${WEB_ROOT}/logo.png"
-  elif [ -f "${REPO_ROOT}/src/1_Indexer/logo.png" ]; then
-    sudo cp -f "${REPO_ROOT}/src/1_Indexer/logo.png" "${WEB_ROOT}/logo.png"
-  fi
-
-  sudo tee "${WEB_ROOT}/index.html" >/dev/null <<'EOF'
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>C.O.R.E ttyd</title>
-  <style>
-    :root {
-      --background-base: #080812;
-      --background-elev-1: #0d0d1a;
-      --background-elev-2: #130a2b;
-      --surface-card: #1a0a3d;
-      --surface-card-alt: #14082f;
-      --primary-dark: #0d0d1a;
-      --primary-medium: #1a0a3d;
-      --accent-neon: #b44fff;
-      --accent-shimmer: #d28bff;
-      --accent-glow: rgba(180, 79, 255, 0.25);
-      --text-primary: #f1e6ff;
-      --text-secondary: #c8addf;
-      --status-success: #39ff8a;
-      --border-subtle: rgba(180, 79, 255, 0.25);
-      --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.45);
-    }
-
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
-
-    body {
-      font-family: "Inter", "Segoe UI", sans-serif;
-      color: var(--text-primary);
-      background:
-        radial-gradient(1200px 700px at 85% -10%, rgba(180, 79, 255, 0.12), transparent 60%),
-        radial-gradient(900px 500px at -10% 110%, rgba(122, 47, 181, 0.16), transparent 65%),
-        linear-gradient(135deg, var(--background-base) 0%, var(--primary-medium) 100%);
-    }
-
-    .wrap {
-      max-width: 1250px;
-      margin: 0 auto;
-      padding: 20px;
-      display: grid;
-      grid-template-rows: auto auto 1fr;
-      gap: 14px;
-      height: 100%;
-    }
-
-    .header {
-      border: 1px solid var(--border-subtle);
-      border-radius: 14px;
-      background: linear-gradient(120deg, var(--primary-dark), var(--primary-medium));
-      box-shadow: 0 0 24px var(--accent-glow), var(--shadow-soft);
-      padding: 14px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .brand img {
-      height: 36px;
-      width: auto;
-      display: block;
-      filter: drop-shadow(0 0 8px rgba(180, 79, 255, 0.5));
-    }
-
-    .title {
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-      min-width: 0;
-    }
-
-    .title h1 {
-      margin: 0;
-      font-size: 16px;
-      letter-spacing: 0.04em;
-    }
-
-    .title p {
-      margin: 0;
-      color: var(--text-secondary);
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .badge {
-      font-family: "JetBrains Mono", "Consolas", monospace;
-      font-size: 12px;
-      color: var(--status-success);
-      border: 1px solid var(--status-success);
-      border-radius: 999px;
-      padding: 4px 10px;
-      background: rgba(57, 255, 138, 0.08);
-    }
-
-    .hint {
-      font-family: "JetBrains Mono", "Consolas", monospace;
-      font-size: 12px;
-      color: var(--text-secondary);
-      border: 1px solid var(--border-subtle);
-      border-radius: 10px;
-      background: linear-gradient(135deg, rgba(26, 10, 61, 0.62), rgba(13, 13, 26, 0.8));
-      padding: 8px 10px;
-    }
-
-    .terminal-shell {
-      border: 1px solid var(--border-subtle);
-      border-radius: 14px;
-      overflow: hidden;
-      background: linear-gradient(135deg, var(--surface-card), var(--surface-card-alt));
-      box-shadow: var(--shadow-soft);
-      min-height: 0;
-      display: grid;
-    }
-
-    iframe {
-      border: 0;
-      width: 100%;
-      height: 100%;
-      min-height: 440px;
-      background: #05050c;
-    }
-
-    @media (max-width: 760px) {
-      .wrap { padding: 12px; }
-      .header { flex-direction: column; align-items: flex-start; }
-      .title p { white-space: normal; }
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header class="header">
-      <div class="brand">
-        <img src="/logo.png" alt="C.O.R.E logo" onerror="this.style.display='none'">
-        <div class="title">
-          <h1>C.O.R.E ttyd Gateway</h1>
-          <p>Interactive terminal surface for mesh operators</p>
-        </div>
-      </div>
-      <span class="badge">ONLINE</span>
-    </header>
-
-    <div class="hint">Access is secured by HTTP auth. Terminal IO is interactive and persisted via systemd service lifecycle.</div>
-
-    <section class="terminal-shell">
-      <iframe src="/terminal/" title="ttyd terminal" loading="eager"></iframe>
-    </section>
-  </div>
-</body>
-</html>
 EOF
-
-  sudo chown -R root:root "${WEB_ROOT}"
-  sudo find "${WEB_ROOT}" -type d -exec chmod 755 {} \;
-  sudo find "${WEB_ROOT}" -type f -exec chmod 644 {} \;
 }
 
 ensure_ubuntu
@@ -500,7 +306,6 @@ resolve_ttyd_bin
 
 log "[3/8] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}"
-write_brand_shell
 
 log "[4/8] Writing and enabling systemd runtime for ttyd"
 normalize_ttyd_extra_args

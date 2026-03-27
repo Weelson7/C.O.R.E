@@ -8,6 +8,7 @@
 - [Files](#files)
 
 ## Infos
+- Operational status: Functional.
 - What it is:
 - What it does:
 - Why this service exists in C.O.R.E:
