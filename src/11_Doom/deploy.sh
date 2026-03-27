@@ -10,43 +10,27 @@ DOMAIN_CERT_NAME="doom.zenith.su"
 NGINX_SSL_DIR="/etc/nginx/ssl"
 NGINX_SITE_FILE="/etc/nginx/sites-available/doom.zenith.su"
 WEB_ROOT="/var/www/doom"
-DOOM_SRC_DIR="/var/www/doom/src"
+DOOM_SRC_DIR="${WEB_ROOT}/src"
 DOOM_WAD="${DOOM_SRC_DIR}/doom1.wad"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-lookup_generated_file() {
-	local target_name="$1"
-	local candidate=""
-
-	for base_dir in "$(pwd)" "${SCRIPT_DIR}" "${HOME}"; do
-		if [ -f "${base_dir}/${target_name}" ]; then
-			echo "${base_dir}/${target_name}"
-			return 0
-		fi
-	done
-
-	candidate="$(find "$(pwd)" "${SCRIPT_DIR}" "${HOME}" -maxdepth 3 -type f -name "${target_name}" 2>/dev/null | head -n 1 || true)"
-	if [ -n "${candidate}" ]; then
-		echo "${candidate}"
-		return 0
-	fi
-
-	return 1
-}
+EMSDK_VERSION="3.1.50"
+EMSDK_DIR="/opt/emsdk"
+WAD_URL="${WAD_URL:-https://www.pc-freak.net/files/doom-wad-files/Doom1.WAD}"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 while [ -z "${NETBIRD_DEVICE_IP}" ]; do
 	read -r -p "Enter NETBIRD_DEVICE_IP (required): " NETBIRD_DEVICE_IP
 done
 
-POLL_SECONDS="${POLL_SECONDS:-10}"
+OWNER_USER="${SUDO_USER:-$(id -un)}"
 
 echo "[1/6] Updating system and installing dependencies..."
 sudo apt update -y
-sudo apt upgrade -y
-sudo apt install -y nginx mkcert nginx-extras openssl curl ca-certificates git wget
+sudo apt install -y \
+	nginx mkcert nginx-extras curl ca-certificates git wget \
+	build-essential make automake autoconf \
+	python3 xz-utils
 
-echo "[2/6] Preparing cloudflare/doom-wasm under ${WEB_ROOT}..."
+echo "[2/6] Preparing cloudflare/doom-wasm under ${WEB_ROOT} and building with emsdk ${EMSDK_VERSION}..."
 sudo mkdir -p "${WEB_ROOT}"
 if [ ! -d "${WEB_ROOT}/.git" ]; then
 	sudo git clone https://github.com/cloudflare/doom-wasm "${WEB_ROOT}"
@@ -54,23 +38,43 @@ else
 	sudo git -C "${WEB_ROOT}" pull --ff-only
 fi
 sudo mkdir -p "${DOOM_SRC_DIR}"
+sudo chown -R "${OWNER_USER}:${OWNER_USER}" "${WEB_ROOT}"
+
+if [ ! -d "${EMSDK_DIR}/.git" ]; then
+	sudo git clone https://github.com/emscripten-core/emsdk.git "${EMSDK_DIR}"
+else
+	sudo git -C "${EMSDK_DIR}" pull --ff-only
+fi
+
+sudo "${EMSDK_DIR}/emsdk" install "${EMSDK_VERSION}"
+sudo "${EMSDK_DIR}/emsdk" activate --embedded "${EMSDK_VERSION}"
+
+sudo -u "${OWNER_USER}" -H bash -lc "
+	set -euo pipefail
+	set +u
+	source '${EMSDK_DIR}/emsdk_env.sh' >/dev/null
+	set -u
+	cd '${WEB_ROOT}'
+	if [ ! -s '${DOOM_WAD}' ]; then
+		wget -q -O '${DOOM_WAD}' '${WAD_URL}'
+	fi
+	./scripts/clean.sh
+	./scripts/build.sh
+"
 
 echo "[3/6] Creating self-signed certificate for ${DOMAIN}..."
 mkcert -install
-mkcert "${DOMAIN_CERT_NAME}"
+TMP_CERT_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_CERT_DIR}"' EXIT
 
-cert_src="$(lookup_generated_file "${DOMAIN_CERT_NAME}.pem" || true)"
-key_src="$(lookup_generated_file "${DOMAIN_CERT_NAME}-key.pem" || true)"
-
-if [ -z "${cert_src}" ] || [ -z "${key_src}" ]; then
-	echo "Error: Could not locate mkcert output files for ${DOMAIN_CERT_NAME}."
-	echo "Expected files: ${DOMAIN_CERT_NAME}.pem and ${DOMAIN_CERT_NAME}-key.pem"
-	exit 1
-fi
+mkcert \
+	-cert-file "${TMP_CERT_DIR}/doom.crt" \
+	-key-file "${TMP_CERT_DIR}/doom.key" \
+	"${DOMAIN_CERT_NAME}"
 
 sudo mkdir -p "${NGINX_SSL_DIR}"
-sudo mv -f "${cert_src}" "${NGINX_SSL_DIR}/doom.crt"
-sudo mv -f "${key_src}" "${NGINX_SSL_DIR}/doom.key"
+sudo install -m 644 "${TMP_CERT_DIR}/doom.crt" "${NGINX_SSL_DIR}/doom.crt"
+sudo install -m 600 "${TMP_CERT_DIR}/doom.key" "${NGINX_SSL_DIR}/doom.key"
 sudo chmod 600 "${NGINX_SSL_DIR}/doom.key"
 
 echo "[4/6] Configuring nginx for ${DOMAIN} on ports 80 and 443..."
@@ -79,7 +83,6 @@ server {
 		listen 80;
 		listen [::]:80;
 		server_name ${DOMAIN};
-		proxy_ssl_verify off;
 		return 301 https://\$host\$request_uri;
 }
 
@@ -87,7 +90,6 @@ server {
 		listen 443 ssl;
 		listen [::]:443 ssl;
 		server_name ${DOMAIN};
-		proxy_ssl_verify off;
 
 		ssl_certificate ${NGINX_SSL_DIR}/doom.crt;
 		ssl_certificate_key ${NGINX_SSL_DIR}/doom.key;
@@ -118,35 +120,11 @@ sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-echo "[5/6] Awaiting manual transfer of doom1.wad..."
-OWNER_USER="${SUDO_USER:-$(id -un)}"
-sudo chown -R "${OWNER_USER}:${OWNER_USER}" /var/www/doom/src
-sudo chmod -R 755 /var/www/doom/src
-echo "Please run the following commands on your x64/x86 laptop with wsl installed:"
-echo "sudo apt install emscripten automake autoconf make libsdl2-dev libsdl2-mixer-dev libsdl2-net-dev"
-echo "cd ~"
-echo "git clone https://github.com/emscripten-core/emsdk.git"
-echo "cd emsdk"
-echo "./emsdk install 3.1.50"
-echo "./emsdk activate 3.1.50"
-echo "source ./emsdk_env.sh"
-echo "git clone https://github.com/cloudflare/doom-wasm ~/doom-wasm"
-echo "cd ~/doom-wasm"
-echo "wget https://www.pc-freak.net/files/doom-wad-files/Doom1.WAD -O src/doom1.wad"
-echo "sudo ./scripts/clean.sh"
-echo "sudo ./scripts/build.sh"
-echo "rsync -av ~/doom-wasm/src/ pi@${NETBIRD_DEVICE_IP}:/var/www/doom/src/"
-
-echo "This script will keep scanning until the file appears."
-while [ ! -s "${DOOM_WAD}" ]; do
-	echo "Waiting... ${DOOM_WAD} not found yet (next check in ${POLL_SECONDS}s)."
-	sleep "${POLL_SECONDS}"
-done
-
+echo "[5/6] Applying web-root ownership and permissions..."
 sudo chown -R www-data:www-data "${WEB_ROOT}"
-sudo find /var/www/doom/src -type f -exec chmod 644 {} \;
-sudo find /var/www/doom/src -type d -exec chmod 755 {} \;
-echo "doom1.wad detected and web root permissions applied."
+sudo find "${DOOM_SRC_DIR}" -type f -exec chmod 644 {} \;
+sudo find "${DOOM_SRC_DIR}" -type d -exec chmod 755 {} \;
+echo "Build artifacts and doom1.wad are in place and permissions applied."
 
 echo "[6/6] Verifying NetBird is already running and checking DNS..."
 if ! command -v netbird >/dev/null 2>&1; then

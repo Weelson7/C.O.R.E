@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# CONTROL_HEADER: Service 5 - C.O.R.E Kasm (kasm.core)
+
+# Containerized architecture contract alignment:
+# 1) dependency installation
+# 2) runtime directory provisioning
+# 3) container runtime definition generation
+# 4) explicit host port conflict checks
+# 5) container activation + local health validation
+# 6) TLS and ingress configuration validation
+# 7) mesh DNS and runtime health validation
+
+SERVICE_NAME="core-kasm"
+DOMAIN="kasm.core"
+INSTALL_DIR="/opt/core/kasm"
+PROFILE_DIR="${INSTALL_DIR}/profile"
+COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+
+IMAGE_TAG="${IMAGE_TAG:-lscr.io/linuxserver/kasm:latest}"
+PUBLISHED_HTTPS_PORT="${PUBLISHED_HTTPS_PORT:-7443}"
+CONTAINER_PORT="${CONTAINER_PORT:-3000}"
+KASM_BACKEND_SCHEME="${KASM_BACKEND_SCHEME:-https}"
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+
+NGINX_SSL_DIR="/etc/nginx/ssl"
+NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
+NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
+NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
+HTPASSWD_FILE="/etc/nginx/.htpasswd_core_kasm"
+
+NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
+NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
+HTPASSWD_USER="${HTPASSWD_USER:-}"
+
+log() {
+  echo "[core-kasm] $*"
+}
+
+fail() {
+  echo "[core-kasm] ERROR: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+ensure_ubuntu() {
+  [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || fail "This script is intended for Ubuntu hosts (detected: ${ID:-unknown})"
+}
+
+ensure_value() {
+  local var_name="$1"
+  local prompt="$2"
+  local current_value="${!var_name:-}"
+
+  while [ -z "${current_value}" ]; do
+    read -r -p "${prompt}: " current_value
+  done
+
+  printf -v "${var_name}" '%s' "${current_value}"
+}
+
+ensure_numeric_port() {
+  local port="$1"
+  if ! printf '%s' "${port}" | grep -Eq '^[0-9]+$'; then
+    fail "Invalid port value: ${port}"
+  fi
+  if [ "${port}" -lt 1 ] || [ "${port}" -gt 65535 ]; then
+    fail "Port out of range (1-65535): ${port}"
+  fi
+}
+
+validate_backend_scheme() {
+  case "${KASM_BACKEND_SCHEME}" in
+    https|http)
+      ;;
+    *)
+      fail "Invalid KASM_BACKEND_SCHEME: ${KASM_BACKEND_SCHEME}. Allowed values: https, http"
+      ;;
+  esac
+}
+
+is_port_listening_tcp() {
+  local port="$1"
+  ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
+}
+
+assert_host_port_available() {
+  local port="$1"
+  if is_port_listening_tcp "${port}"; then
+    fail "Port conflict detected: tcp/${port} is already in use. Set PUBLISHED_HTTPS_PORT to a free port and rerun."
+  fi
+}
+
+validate_resolved_ip() {
+  local resolved_ip="$1"
+
+  if [ "${resolved_ip}" = "${NETBIRD_DEVICE_IP}" ]; then
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${resolved_ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
+    log "DNS currently resolves to configured failover IP (${NETBIRD_FAILOVER_IP})"
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ]; then
+    fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP} or ${NETBIRD_FAILOVER_IP}, got ${resolved_ip}"
+  fi
+
+  fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
+}
+
+wait_for_local_health() {
+  local retries="${1:-40}"
+  local delay="${2:-2}"
+  local i
+
+  for i in $(seq 1 "${retries}"); do
+    if [ "${KASM_BACKEND_SCHEME}" = "https" ]; then
+      if curl --silent --show-error --fail --insecure "https://127.0.0.1:${PUBLISHED_HTTPS_PORT}/" >/dev/null; then
+        return 0
+      fi
+    else
+      if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTPS_PORT}/" >/dev/null; then
+        return 0
+      fi
+    fi
+    sleep "${delay}"
+  done
+
+  return 1
+}
+
+write_compose_file() {
+  sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
+services:
+  kasm:
+    container_name: ${SERVICE_NAME}
+    image: ${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - KASM_PORT=${CONTAINER_PORT}
+    shm_size: "1gb"
+    volumes:
+      - ${PROFILE_DIR}:/profile
+    ports:
+      - "127.0.0.1:${PUBLISHED_HTTPS_PORT}:${CONTAINER_PORT}"
+EOF
+}
+
+write_nginx_site() {
+  sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${NGINX_CERT_FILE};
+    ssl_certificate_key ${NGINX_KEY_FILE};
+
+    auth_basic           "C.O.R.E. - restricted";
+    auth_basic_user_file ${HTPASSWD_FILE};
+
+    location / {
+        proxy_pass         ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+EOF
+
+  if [ "${KASM_BACKEND_SCHEME}" = "https" ]; then
+    sudo tee -a "${NGINX_SITE_FILE}" >/dev/null <<'EOF'
+        proxy_ssl_server_name on;
+        proxy_ssl_verify      off;
+EOF
+  fi
+
+  sudo tee -a "${NGINX_SITE_FILE}" >/dev/null <<'EOF'
+    }
+
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy        "same-origin" always;
+
+    access_log /var/log/nginx/core-kasm.access.log;
+    error_log  /var/log/nginx/core-kasm.error.log warn;
+}
+EOF
+}
+
+ensure_ubuntu
+require_cmd sudo
+require_cmd apt
+require_cmd getent
+require_cmd awk
+require_cmd grep
+require_cmd ss
+
+ensure_numeric_port "${PUBLISHED_HTTPS_PORT}"
+ensure_numeric_port "${CONTAINER_PORT}"
+validate_backend_scheme
+
+ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
+ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
+
+log "[1/8] Installing deployment dependencies"
+sudo apt update -y
+sudo apt install -y nginx mkcert apache2-utils curl ca-certificates docker.io docker-compose-plugin iproute2
+
+require_cmd mkcert
+require_cmd nginx
+require_cmd docker
+require_cmd curl
+require_cmd htpasswd
+sudo docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available"
+
+sudo systemctl enable docker
+sudo systemctl restart docker
+
+log "[2/8] Provisioning runtime directories"
+sudo mkdir -p "${INSTALL_DIR}" "${PROFILE_DIR}"
+
+if [ -f "${COMPOSE_FILE}" ]; then
+  log "Stopping existing stack before conflict checks"
+  sudo docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+fi
+sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+
+log "[3/8] Enforcing no-port-conflict policy"
+assert_host_port_available "${PUBLISHED_HTTPS_PORT}"
+
+log "[4/8] Writing container runtime definition"
+write_compose_file
+
+log "[5/8] Starting Kasm container"
+sudo docker compose -f "${COMPOSE_FILE}" up -d
+
+container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
+[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
+
+wait_for_local_health 40 2 || fail "Kasm local health check failed on ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
+
+log "[6/8] Provisioning TLS material for ${DOMAIN}"
+mkcert -install
+
+tmp_cert="$(mktemp /tmp/core-kasm-cert.XXXXXX.pem)"
+tmp_key="$(mktemp /tmp/core-kasm-key.XXXXXX.pem)"
+mkcert -cert-file "${tmp_cert}" -key-file "${tmp_key}" "${DOMAIN}"
+
+sudo mkdir -p "${NGINX_SSL_DIR}"
+sudo mv -f "${tmp_cert}" "${NGINX_CERT_FILE}"
+sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
+sudo chmod 640 "${NGINX_CERT_FILE}"
+sudo chmod 600 "${NGINX_KEY_FILE}"
+
+log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
+if [ ! -f "${HTPASSWD_FILE}" ]; then
+  sudo htpasswd -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+else
+  sudo htpasswd "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+fi
+sudo chmod 640 "${HTPASSWD_FILE}"
+
+write_nginx_site
+
+sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
+sudo rm -f /etc/nginx/sites-enabled/default
+
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl restart nginx
+
+log "[8/8] Validating mesh DNS and ingress runtime"
+require_cmd netbird
+sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
+
+resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+[ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
+validate_resolved_ip "${resolved_ip}"
+
+curl --silent --show-error --fail --insecure "https://${DOMAIN}/" >/dev/null \
+  || fail "Ingress health check failed for https://${DOMAIN}/"
+
+echo
+log "Deployment complete and container runtime checks passed"
+log "URL: https://${DOMAIN}"
+log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
+log "Compose stack: sudo docker compose -f ${COMPOSE_FILE} ps"

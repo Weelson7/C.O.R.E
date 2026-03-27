@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# CONTROL_HEADER: Service 3 - C.O.R.E Jellyfin (jellyfin.core)
+
+# Containerized architecture contract alignment:
+# 1) dependency installation
+# 2) runtime directory provisioning
+# 3) container runtime definition generation
+# 4) container activation
+# 5) TLS material provisioning
+# 6) centralized ingress authentication
+# 7) ingress configuration validation
+# 8) mesh DNS and runtime health validation
+
+SERVICE_NAME="core-jellyfin"
+DOMAIN="jellyfin.core"
+INSTALL_DIR="/opt/core/jellyfin"
+CONFIG_DIR="${INSTALL_DIR}/config"
+CACHE_DIR="${INSTALL_DIR}/cache"
+MEDIA_DIR="${MEDIA_DIR:-/srv/media}"
+COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+
+IMAGE_TAG="${IMAGE_TAG:-jellyfin/jellyfin:latest}"
+PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-8096}"
+
+NGINX_SSL_DIR="/etc/nginx/ssl"
+NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
+NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
+NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
+HTPASSWD_FILE="/etc/nginx/.htpasswd_core_jellyfin"
+
+NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
+NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
+HTPASSWD_USER="${HTPASSWD_USER:-}"
+
+log() {
+  echo "[core-jellyfin] $*"
+}
+
+fail() {
+  echo "[core-jellyfin] ERROR: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+ensure_ubuntu() {
+  [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || fail "This script is intended for Ubuntu hosts (detected: ${ID:-unknown})"
+}
+
+ensure_value() {
+  local var_name="$1"
+  local prompt="$2"
+  local current_value="${!var_name:-}"
+
+  while [ -z "${current_value}" ]; do
+    read -r -p "${prompt}: " current_value
+  done
+
+  printf -v "${var_name}" '%s' "${current_value}"
+}
+
+validate_resolved_ip() {
+  local resolved_ip="$1"
+
+  if [ "${resolved_ip}" = "${NETBIRD_DEVICE_IP}" ]; then
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${resolved_ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
+    log "DNS currently resolves to configured failover IP (${NETBIRD_FAILOVER_IP})"
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ]; then
+    fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP} or ${NETBIRD_FAILOVER_IP}, got ${resolved_ip}"
+  fi
+
+  fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
+}
+
+write_compose_file() {
+  sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
+services:
+  jellyfin:
+    container_name: ${SERVICE_NAME}
+    image: ${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - JELLYFIN_PublishedServerUrl=https://${DOMAIN}
+    volumes:
+      - ${CONFIG_DIR}:/config
+      - ${CACHE_DIR}:/cache
+      - ${MEDIA_DIR}:/media:ro
+    ports:
+      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:8096"
+EOF
+}
+
+write_nginx_site() {
+  sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${NGINX_CERT_FILE};
+    ssl_certificate_key ${NGINX_KEY_FILE};
+
+    auth_basic           "C.O.R.E. - restricted";
+    auth_basic_user_file ${HTPASSWD_FILE};
+
+    client_max_body_size 20G;
+
+    location / {
+        proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 3600;
+    }
+
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff"    always;
+    add_header Referrer-Policy        "same-origin" always;
+
+    access_log /var/log/nginx/core-jellyfin.access.log;
+    error_log  /var/log/nginx/core-jellyfin.error.log warn;
+}
+EOF
+}
+
+ensure_ubuntu
+require_cmd sudo
+require_cmd apt
+require_cmd getent
+require_cmd awk
+
+ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
+ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
+
+log "[1/8] Installing deployment dependencies"
+sudo apt update -y
+sudo apt install -y nginx mkcert apache2-utils curl ca-certificates docker.io docker-compose-plugin
+
+require_cmd mkcert
+require_cmd nginx
+require_cmd docker
+require_cmd curl
+require_cmd htpasswd
+sudo docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available"
+
+sudo systemctl enable docker
+sudo systemctl restart docker
+
+log "[2/7] Provisioning runtime directories"
+sudo mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}"
+
+log "[3/7] Writing container runtime definition"
+write_compose_file
+
+log "[4/7] Starting Jellyfin container"
+sudo docker compose -f "${COMPOSE_FILE}" up -d
+
+container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
+[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
+
+curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null \
+  || fail "Jellyfin local health check failed"
+
+log "[5/7] Provisioning TLS material for ${DOMAIN}"
+mkcert -install
+
+tmp_cert="$(mktemp /tmp/core-jellyfin-cert.XXXXXX.pem)"
+tmp_key="$(mktemp /tmp/core-jellyfin-key.XXXXXX.pem)"
+mkcert -cert-file "${tmp_cert}" -key-file "${tmp_key}" "${DOMAIN}"
+
+sudo mkdir -p "${NGINX_SSL_DIR}"
+sudo mv -f "${tmp_cert}" "${NGINX_CERT_FILE}"
+sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
+sudo chmod 640 "${NGINX_CERT_FILE}"
+sudo chmod 600 "${NGINX_KEY_FILE}"
+
+log "[6/7] Enforcing centralized ingress authentication"
+if [ ! -f "${HTPASSWD_FILE}" ]; then
+  sudo htpasswd -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+else
+  sudo htpasswd "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+fi
+sudo chmod 640 "${HTPASSWD_FILE}"
+
+log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
+write_nginx_site
+
+sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
+sudo rm -f /etc/nginx/sites-enabled/default
+
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl restart nginx
+
+log "[8/8] Validating mesh DNS and ingress runtime"
+require_cmd netbird
+sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
+
+resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+[ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
+validate_resolved_ip "${resolved_ip}"
+
+curl --silent --show-error --fail --insecure "https://${DOMAIN}/web/index.html" >/dev/null \
+  || fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
+
+echo
+log "Deployment complete and container runtime checks passed"
+log "URL: https://${DOMAIN}"
+log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
+log "Compose stack: sudo docker compose -f ${COMPOSE_FILE} ps"

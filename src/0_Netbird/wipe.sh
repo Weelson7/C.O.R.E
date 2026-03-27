@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# CONTROL_HEADER: Service 0 - C.O.R.E Netbird Wipe (netbird.core)
+
+PURGE_PACKAGES="${PURGE_PACKAGES:-true}"
+FORCE="${FORCE:-false}"
+NETBIRD_STATUS_FILE="/tmp/core-netbird-status.txt"
+
+log() {
+  echo "[core-netbird:wipe] $*"
+}
+
+confirm() {
+  if [ "${FORCE}" = "true" ]; then
+    return 0
+  fi
+
+  echo "This will remove Netbird enrollment artifacts and optionally purge installed packages."
+  read -r -p "Type WIPE to continue: " answer
+  [ "${answer}" = "WIPE" ] || {
+    log "Aborted by user"
+    exit 1
+  }
+}
+
+ensure_ubuntu() {
+  [ -r /etc/os-release ] || {
+    log "Cannot determine operating system"
+    exit 1
+  }
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || {
+    log "This script is intended for Ubuntu hosts"
+    exit 1
+  }
+}
+
+confirm
+ensure_ubuntu
+
+log "Stopping Netbird runtime if present"
+if command -v netbird >/dev/null 2>&1; then
+  sudo netbird down >/dev/null 2>&1 || true
+fi
+
+log "Removing repository and runtime artifacts"
+sudo rm -f /etc/apt/sources.list.d/netbird.list
+sudo rm -f /etc/apt/keyrings/netbird.gpg
+sudo rm -f "${NETBIRD_STATUS_FILE}"
+sudo rm -rf /etc/netbird /var/lib/netbird /var/log/netbird
+
+if [ "${PURGE_PACKAGES}" = "true" ]; then
+  log "Purging packages installed by deploy.sh"
+  sudo apt purge -y netbird ca-certificates curl gnupg || true
+  sudo apt autoremove -y || true
+  sudo apt clean || true
+else
+  log "Skipping apt purge because PURGE_PACKAGES=${PURGE_PACKAGES}"
+fi
+
+log "Wipe complete"
