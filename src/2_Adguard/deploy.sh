@@ -206,18 +206,18 @@ disable_netbird_dns_usage() {
 		return 0
 	fi
 
-	log "NetBird is bound to port 53; reconfiguring NetBird with DNS disabled"
+	log "NetBird is bound to port 53; relocating NetBird local DNS resolver to 127.0.0.1:22053"
 	sudo netbird down >/dev/null 2>&1 || true
-	if ! sudo netbird up --disable-dns; then
-		fail "Failed to restart NetBird with --disable-dns"
+	if ! sudo netbird up --dns-resolver-address 127.0.0.1:22053; then
+		fail "Failed to restart NetBird with --dns-resolver-address 127.0.0.1:22053"
 	fi
 
 	sleep 1
 	if is_netbird_bound_to_port_53; then
-		log "NetBird still appears bound to port 53 after --disable-dns; forcing DNS resolver to 127.0.0.1:22053"
+		log "NetBird still appears bound to port 53 after resolver relocation; trying --disable-dns as last resort"
 		sudo netbird down >/dev/null 2>&1 || true
-		if ! sudo netbird up --dns-resolver-address 127.0.0.1:22053; then
-			fail "Failed to restart NetBird with --dns-resolver-address 127.0.0.1:22053"
+		if ! sudo netbird up --disable-dns; then
+			fail "Failed to restart NetBird with --disable-dns"
 		fi
 
 		sleep 1
@@ -251,6 +251,12 @@ query_dns_a() {
 	local host="$1"
 
 	dig +time=2 +tries=1 +short @127.0.0.1 -p 53 "${host}" A 2>/dev/null | awk 'NF {print; exit}'
+}
+
+query_dns_a_mesh() {
+	local host="$1"
+
+	dig +time=2 +tries=1 +short @"${NETBIRD_DEVICE_IP}" -p 53 "${host}" A 2>/dev/null | awk 'NF {print; exit}'
 }
 
 download_adguard_home() {
@@ -598,6 +604,7 @@ validate_rewrites() {
 	local host
 	local expected_ip
 	local resolved_ip
+	local resolved_mesh_ip
 
 	if [ "${#REWRITE_HOSTS[@]}" -eq 0 ]; then
 		return 0
@@ -609,6 +616,8 @@ validate_rewrites() {
 		expected_ip="${REWRITE_IPS[${idx}]}"
 		resolved_ip="$(query_dns_a "${host}" || true)"
 		[ "${resolved_ip}" = "${expected_ip}" ] || fail "Rewrite validation failed: ${host}, expected ${expected_ip}, got ${resolved_ip:-<empty>}"
+		resolved_mesh_ip="$(query_dns_a_mesh "${host}" || true)"
+		[ "${resolved_mesh_ip}" = "${expected_ip}" ] || fail "Mesh DNS validation failed: ${host} via ${NETBIRD_DEVICE_IP}:53 expected ${expected_ip}, got ${resolved_mesh_ip:-<empty>}"
 		log "Rewrite verified: ${host} resolves to ${resolved_ip}"
 	done
 }
@@ -619,6 +628,7 @@ final_validation() {
 	local host
 	local expected_ip
 	local resolved_ip
+	local resolved_mesh_ip
 
 	log "Final runtime + config validation"
 	scan_runtime_ports
@@ -635,6 +645,8 @@ final_validation() {
 		expected_ip="${REWRITE_IPS[${idx}]}"
 		resolved_ip="$(query_dns_a "${host}" || true)"
 		[ "${resolved_ip}" = "${expected_ip}" ] || fail "Rewrite validation failed: ${host}, expected ${expected_ip}, got ${resolved_ip:-<empty>}"
+		resolved_mesh_ip="$(query_dns_a_mesh "${host}" || true)"
+		[ "${resolved_mesh_ip}" = "${expected_ip}" ] || fail "Mesh DNS validation failed: ${host} via ${NETBIRD_DEVICE_IP}:53 expected ${expected_ip}, got ${resolved_mesh_ip:-<empty>}"
 	done
 }
 
