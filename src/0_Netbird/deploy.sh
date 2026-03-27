@@ -4,10 +4,9 @@ set -euo pipefail
 
 # Node enrollment contract alignment:
 # 1) dependency installation
-# 2) Netbird repository provisioning
-# 3) agent installation
-# 4) node registration with runtime setup key
-# 5) connection status verification
+# 2) agent installation
+# 3) node registration with runtime setup key
+# 4) connection status verification
 
 NETBIRD_SETUP_KEY="${NETBIRD_SETUP_KEY:-}"
 NETBIRD_MGMT_URL="${NETBIRD_MGMT_URL:-}"
@@ -89,24 +88,12 @@ ensure_value NETBIRD_SETUP_KEY "Enter NETBIRD_SETUP_KEY for node enrollment" tru
 ensure_ubuntu
 require_cmd sudo
 require_cmd apt
-require_cmd curl
-require_cmd gpg
 
-log "[1/5] Installing deployment dependencies"
+log "[1/4] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y ca-certificates curl gnupg
+sudo apt install -y ca-certificates
 
-log "[2/5] Provisioning Netbird package repository"
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://pkgs.netbird.io/ubuntu/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/netbird.gpg
-sudo chmod a+r /etc/apt/keyrings/netbird.gpg
-
-echo \
-  "deb [signed-by=/etc/apt/keyrings/netbird.gpg] https://pkgs.netbird.io/ubuntu stable main" \
-  | sudo tee /etc/apt/sources.list.d/netbird.list >/dev/null
-
-log "[3/5] Installing Netbird agent"
-sudo apt update -y
+log "[2/4] Installing Netbird agent"
 sudo apt install -y netbird
 require_cmd netbird
 
@@ -114,12 +101,12 @@ if is_netbird_connected; then
   log "Node is already connected to Netbird. Re-registering with provided setup key."
 fi
 
-log "[4/5] Registering node with Netbird network"
+log "[3/4] Registering node with Netbird network"
 mapfile -t NB_UP_ARGS < <(build_up_args)
 sudo netbird down >/dev/null 2>&1 || true
 sudo netbird "${NB_UP_ARGS[@]}"
 
-log "[5/5] Verifying Netbird runtime status"
+log "[4/4] Verifying Netbird runtime status"
 sudo netbird status >"${NETBIRD_STATUS_FILE}" 2>/dev/null || fail "Netbird status check failed"
 cat "${NETBIRD_STATUS_FILE}"
 
