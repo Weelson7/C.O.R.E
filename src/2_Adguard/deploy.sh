@@ -291,6 +291,34 @@ EOF
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
 }
 
+cleanup_previous_runtime() {
+	log "Cleaning previous AdGuard runtime artifacts"
+
+	if [ -f "${COMPOSE_FILE}" ]; then
+		"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+	fi
+
+	sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+}
+
+wait_for_admin_panel_http() {
+	local attempt=1
+	local max_attempts=20
+
+	while [ "${attempt}" -le "${max_attempts}" ]; do
+		if curl -fsS -o /dev/null "http://127.0.0.1:${ADMIN_PANEL_PORT}"; then
+			return 0
+		fi
+		sleep 1
+		attempt=$((attempt + 1))
+	done
+
+	log "AdGuard panel is not reachable at http://127.0.0.1:${ADMIN_PANEL_PORT}"
+	log "Container logs (last 80 lines):"
+	sudo docker logs --tail 80 "${SERVICE_NAME}" || true
+	fail "Setup wizard endpoint is unavailable"
+}
+
 sync_admin_panel_mapping_from_config() {
 	local config_file="${CONF_DIR}/AdGuardHome.yaml"
 	local configured_port=""
@@ -315,15 +343,18 @@ sync_admin_panel_mapping_from_config() {
 
 start_single() {
 	log "Building image and starting single-node container"
+	cleanup_previous_runtime
 	sudo docker build -t "${IMAGE_TAG}" "${BUILD_DIR}"
 	write_compose_file
+	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" config >/dev/null || fail "Generated compose file is invalid: ${COMPOSE_FILE}"
 
-	sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
-	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
+	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
 
 	local state
 	state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 	[ "${state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
+
+	wait_for_admin_panel_http
 }
 
 wait_for_setup_completion() {
