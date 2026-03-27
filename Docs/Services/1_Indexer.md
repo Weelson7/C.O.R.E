@@ -8,6 +8,7 @@
 - [Files](#files)
 
 ## Infos
+- Operational status: Functional.
 - What it is: A mesh-scoped service index composed of a static frontend and a Flask API backend, exposed through Nginx ingress.
 - What it does: Discovers service virtual hosts from Nginx site definitions and serves them via `/api/sites` to the index UI.
 - Why this service exists in C.O.R.E: It provides a single operational entry point for cluster services under the `.core` namespace and makes service reachability status visible at a glance.

@@ -143,7 +143,7 @@ install_ttyd_with_snap() {
     return 0
   fi
 
-  sudo snap install ttyd
+  sudo snap install ttyd --classic
 }
 
 write_env_file() {
