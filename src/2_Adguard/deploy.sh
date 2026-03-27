@@ -277,7 +277,6 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-      - "8080:8080/tcp"
       - "${ADMIN_PANEL_PORT}:3000/tcp"
 EOF
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
