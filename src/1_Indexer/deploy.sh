@@ -218,6 +218,23 @@ wait_for_ingress_api_health() {
   return 1
 }
 
+wait_for_ingress_api_health_dns_only() {
+  local retries="$1"
+  local delay="$2"
+  local i
+
+  for i in $(seq 1 "${retries}"); do
+    if curl --silent --show-error --fail --insecure \
+      -u "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
+      "https://${DOMAIN}/api/sites" >/dev/null; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+
+  return 1
+}
+
 wait_for_local_api_health() {
   local retries="$1"
   local delay="$2"
@@ -286,18 +303,13 @@ if [ ! -f "${RUNTIME_API_ENTRYPOINT}" ]; then
   write_fallback_api "${RUNTIME_API_ENTRYPOINT}"
 fi
 
-if [ ! -f "${INSTALL_DIR}/requirements.txt" ]; then
-  log "requirements.txt not found; generating minimal fallback"
-  printf '%s\n' 'flask' | sudo tee "${INSTALL_DIR}/requirements.txt" >/dev/null
-fi
-
 sudo tee "${DOCKERFILE_PATH}" >/dev/null <<EOF
 FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+  && pip install --no-cache-dir "flask>=3.0,<4.0"
 
 COPY . .
 
@@ -332,6 +344,7 @@ if [ ! -f "${HTPASSWD_FILE}" ]; then
 else
   printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 fi
+sudo chown root:www-data "${HTPASSWD_FILE}"
 sudo chmod 640 "${HTPASSWD_FILE}"
 
 log "[6/8] Writing Nginx ingress config for ${DOMAIN}"
@@ -412,6 +425,14 @@ if [ -n "${resolved_ips}" ]; then
   validate_resolved_ip_list "${resolved_ips}"
   dns_validated="true"
 else
+  if wait_for_ingress_api_health_dns_only 5 1; then
+    log "${DOMAIN} is reachable through system DNS despite empty getent output; continuing"
+    dns_validated="true"
+  fi
+
+fi
+
+if [ "${dns_validated}" != "true" ]; then
   if [ "${STRICT_DNS_VALIDATION}" = "true" ]; then
     fail "DNS lookup failed for ${DOMAIN}; configure AdGuard and Netbird nameserver group"
   fi
