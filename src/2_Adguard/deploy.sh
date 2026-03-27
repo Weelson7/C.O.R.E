@@ -214,17 +214,27 @@ disable_netbird_dns_usage() {
 
 	sleep 1
 	if is_netbird_bound_to_port_53; then
-		log "NetBird still appears bound to port 53 after resolver relocation; trying --disable-dns as last resort"
-		sudo netbird down >/dev/null 2>&1 || true
-		if ! sudo netbird up --disable-dns; then
-			fail "Failed to restart NetBird with --disable-dns"
-		fi
-
-		sleep 1
-		if is_netbird_bound_to_port_53; then
-			fail "NetBird still appears bound to port 53 after resolver port override"
-		fi
+		fail "NetBird still appears bound to port 53 after resolver relocation. Refusing to continue because fallback --disable-dns breaks mesh DNS behavior."
 	fi
+}
+
+verify_netbird_dns_contract() {
+	local detail
+
+	detail="$(sudo netbird status --detail 2>/dev/null || true)"
+	if [ -z "${detail}" ]; then
+		fail "Unable to read NetBird detailed status; cannot verify mesh DNS contract"
+	fi
+
+	if ! printf '%s' "${detail}" | grep -Eq '(nameserver|dns)'; then
+		fail "NetBird DNS control-plane does not appear configured. Configure a NetBird nameserver group and domain routing for .core to ${NETBIRD_DEVICE_IP}:53"
+	fi
+
+	if ! printf '%s' "${detail}" | grep -Fq "${NETBIRD_DEVICE_IP}"; then
+		fail "NetBird DNS control-plane is not targeting this AdGuard node (${NETBIRD_DEVICE_IP}). Configure nameserver group for .core and attach this node as DNS server."
+	fi
+
+	log "NetBird DNS contract check passed for ${NETBIRD_DEVICE_IP}"
 }
 
 scan_runtime_ports() {
@@ -337,10 +347,27 @@ provision_tls_material() {
 write_nginx_site() {
 	sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
 server {
+	listen 80 default_server;
+	listen [::]:80 default_server;
+	server_name _;
+	return 444;
+}
+
+server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
+}
+
+server {
+	listen 443 ssl default_server;
+	listen [::]:443 ssl default_server;
+	server_name _;
+
+	ssl_certificate     ${NGINX_CERT_FILE};
+	ssl_certificate_key ${NGINX_KEY_FILE};
+	return 444;
 }
 
 server {
@@ -681,6 +708,9 @@ disable_systemd_resolved_stub_listener
 
 log "[3/9] Applying NetBird DNS-port mitigation"
 disable_netbird_dns_usage
+
+log "[3.5/9] Verifying NetBird DNS control-plane contract"
+verify_netbird_dns_contract
 
 log "[4/9] Using single-node runtime mode"
 
