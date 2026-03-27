@@ -2,6 +2,9 @@
 set -euo pipefail
 # CONTROL_HEADER: Service 2 - C.O.R.E AdGuard Home (dns.core)
 
+# Required runtime input:
+# - NETBIRD_DEVICE_IP: target IP used for default DNS rewrites
+
 # Containerized architecture contract alignment:
 # 1) dependency installation
 # 2) single-node runtime mode
@@ -21,8 +24,28 @@ COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
 ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
+PUBLISH_HTTPS_PORT="${PUBLISH_HTTPS_PORT:-false}"
+ADGUARD_HTTPS_PORT="${ADGUARD_HTTPS_PORT:-443}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 COMPOSE_CMD=()
+NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
+ADGUARD_ADMIN_USER="${ADGUARD_ADMIN_USER:-}"
+ADGUARD_ADMIN_PASSWORD="${ADGUARD_ADMIN_PASSWORD:-}"
+
+DEFAULT_REWRITE_DOMAINS=(
+	"index.core"
+	"dns.core"
+	"jellyfin.core"
+	"suwayomi.core"
+	"kasm.core"
+	"crafty.core"
+	"ttyd.core"
+	"qbittorrent.core"
+	"jupyter.core"
+	"stirling.core"
+	"doom.zenith.su"
+	"supervisor.core"
+)
 
 declare -a REWRITE_HOSTS=()
 declare -a REWRITE_IPS=()
@@ -95,6 +118,19 @@ ensure_value() {
 
 	while [ -z "${current_value}" ]; do
 		read -r -p "${prompt}: " current_value
+	done
+
+	printf -v "${var_name}" '%s' "${current_value}"
+}
+
+ensure_secret_value() {
+	local var_name="$1"
+	local prompt="$2"
+	local current_value="${!var_name:-}"
+
+	while [ -z "${current_value}" ]; do
+		read -r -s -p "${prompt}: " current_value
+		echo
 	done
 
 	printf -v "${var_name}" '%s' "${current_value}"
@@ -231,7 +267,8 @@ EOF
 }
 
 write_compose_file() {
-	sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
+	{
+		cat <<EOF
 services:
   adguard:
     container_name: ${SERVICE_NAME}
@@ -242,11 +279,16 @@ services:
       - "53:53/udp"
       - "8080:8080/tcp"
       - "${ADMIN_PANEL_PORT}:3000/tcp"
-      - "443:443/tcp"
+EOF
+		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
+			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
+		fi
+		cat <<EOF
     volumes:
       - ${WORK_DIR}:/opt/adguardhome/work
       - ${CONF_DIR}:/opt/adguardhome/conf
 EOF
+	} | sudo tee "${COMPOSE_FILE}" >/dev/null
 }
 
 start_single() {
@@ -302,38 +344,45 @@ wait_for_setup_completion() {
 	done
 }
 
-capture_rewrite_targets() {
-	local rewrite_count=""
-	local i
+load_default_rewrite_targets() {
 	local host
-	local ip
 
-	while :; do
-		read -r -p "How many DNS rewrites do you want to validate now? " rewrite_count
-		if printf '%s' "${rewrite_count}" | grep -Eq '^[0-9]+$'; then
-			break
-		fi
-	done
+	REWRITE_HOSTS=()
+	REWRITE_IPS=()
 
-	if [ "${rewrite_count}" -eq 0 ]; then
-		log "No rewrite entries provided. Skipping rewrite checks by request."
-		return 0
-	fi
-
-	i=1
-	while [ "${i}" -le "${rewrite_count}" ]; do
-		ensure_value host "Rewrite ${i}/${rewrite_count} hostname (example: service.core)"
-		ensure_value ip "Rewrite ${i}/${rewrite_count} target IPv4"
-
+	for host in "${DEFAULT_REWRITE_DOMAINS[@]}"; do
 		REWRITE_HOSTS+=("${host}")
-		REWRITE_IPS+=("${ip}")
-		host=""
-		ip=""
-		i=$((i + 1))
+		REWRITE_IPS+=("${NETBIRD_DEVICE_IP}")
 	done
 }
 
-validate_each_rewrite_loop() {
+apply_rewrites_via_api() {
+	local idx
+	local host
+	local ip
+	local payload
+
+	ensure_value ADGUARD_ADMIN_USER "Enter AdGuard admin username (for rewrite API)"
+	ensure_secret_value ADGUARD_ADMIN_PASSWORD "Enter AdGuard admin password (for rewrite API)"
+
+	log "Applying default DNS rewrites through AdGuard API"
+	for idx in "${!REWRITE_HOSTS[@]}"; do
+		host="${REWRITE_HOSTS[${idx}]}"
+		ip="${REWRITE_IPS[${idx}]}"
+		payload="{\"domain\":\"${host}\",\"answer\":\"${ip}\"}"
+
+		if ! curl --silent --show-error --fail \
+			-u "${ADGUARD_ADMIN_USER}:${ADGUARD_ADMIN_PASSWORD}" \
+			-H 'Content-Type: application/json' \
+			-X POST \
+			-d "${payload}" \
+			"http://127.0.0.1:${ADMIN_PANEL_PORT}/control/rewrite/add" >/dev/null; then
+			log "Rewrite add API returned non-success for ${host}; continuing to validation"
+		fi
+	done
+}
+
+validate_rewrites() {
 	local idx
 	local host
 	local expected_ip
@@ -343,24 +392,13 @@ validate_each_rewrite_loop() {
 		return 0
 	fi
 
-	log "DNS rewrite entry loops"
+	log "Validating DNS rewrites"
 	for idx in "${!REWRITE_HOSTS[@]}"; do
 		host="${REWRITE_HOSTS[${idx}]}"
 		expected_ip="${REWRITE_IPS[${idx}]}"
-
-		while true; do
-			log "Add/update rewrite in AdGuard UI: ${host} -> ${expected_ip}"
-			read -r -p "Press Enter when the rewrite is saved to run scan... " _discard
-
-			resolved_ip="$(query_dns_a "${host}" || true)"
-			if [ "${resolved_ip}" = "${expected_ip}" ]; then
-				log "Rewrite verified: ${host} resolves to ${resolved_ip}"
-				break
-			fi
-
-			log "Rewrite scan mismatch for ${host}: expected ${expected_ip}, got ${resolved_ip:-<empty>}"
-			log "Fix the rewrite and run the scan again."
-		done
+		resolved_ip="$(query_dns_a "${host}" || true)"
+		[ "${resolved_ip}" = "${expected_ip}" ] || fail "Rewrite validation failed: ${host}, expected ${expected_ip}, got ${resolved_ip:-<empty>}"
+		log "Rewrite verified: ${host} resolves to ${resolved_ip}"
 	done
 }
 
@@ -394,6 +432,8 @@ ensure_ubuntu
 require_cmd sudo
 require_cmd apt
 
+ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (target IP for default DNS rewrites)"
+
 sudo apt update -y
 sudo apt install -y ca-certificates curl tar dnsutils
 install_container_stack
@@ -405,6 +445,7 @@ require_cmd dig
 require_cmd ss
 require_cmd awk
 require_cmd grep
+require_cmd netbird
 resolve_compose_cmd
 
 sudo systemctl enable docker
@@ -431,12 +472,9 @@ log "[7/9] Waiting for setup wizard completion"
 wait_for_setup_completion
 
 log "[8/9] Capturing and validating DNS rewrites"
-capture_rewrite_targets
-if [ "${#REWRITE_HOSTS[@]}" -eq 0 ]; then
-	log "No rewrites requested for validation in this run."
-else
-	validate_each_rewrite_loop
-fi
+load_default_rewrite_targets
+apply_rewrites_via_api
+validate_rewrites
 
 log "[9/9] Running final validation"
 final_validation
