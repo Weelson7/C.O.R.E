@@ -34,6 +34,8 @@ STRICT_DNS_VALIDATION="${STRICT_DNS_VALIDATION:-false}"
 COMPOSE_CMD=()
 API_HEALTH_RETRIES="${API_HEALTH_RETRIES:-30}"
 API_HEALTH_DELAY_SECONDS="${API_HEALTH_DELAY_SECONDS:-2}"
+DNS_WAIT_RETRIES="${DNS_WAIT_RETRIES:-30}"
+DNS_WAIT_DELAY_SECONDS="${DNS_WAIT_DELAY_SECONDS:-2}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
 log() {
@@ -188,6 +190,53 @@ validate_resolved_ip() {
   fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
 }
 
+resolve_dns_ipv4() {
+  local by_getent=""
+  local by_dig=""
+
+  by_getent="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+  if [ -n "${by_getent}" ]; then
+    printf '%s' "${by_getent}"
+    return 0
+  fi
+
+  if command -v dig >/dev/null 2>&1; then
+    by_dig="$(dig +time=2 +tries=1 +short "${DOMAIN}" A 2>/dev/null | awk 'NF {print; exit}' || true)"
+    if [ -n "${by_dig}" ]; then
+      printf '%s' "${by_dig}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+wait_for_dns_contract() {
+  local retries="$1"
+  local delay="$2"
+  local i
+  local candidate=""
+
+  for i in $(seq 1 "${retries}"); do
+    candidate="$(resolve_dns_ipv4 || true)"
+    if [ -n "${candidate}" ]; then
+      if [ "${candidate}" = "${NETBIRD_DEVICE_IP}" ]; then
+        printf '%s' "${candidate}"
+        return 0
+      fi
+
+      if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${candidate}" = "${NETBIRD_FAILOVER_IP}" ]; then
+        printf '%s' "${candidate}"
+        return 0
+      fi
+    fi
+
+    sleep "${delay}"
+  done
+
+  return 1
+}
+
 wait_for_local_api_health() {
   local retries="$1"
   local delay="$2"
@@ -215,7 +264,7 @@ ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPA
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync
+sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync dnsutils
 install_container_stack
 
 require_cmd mkcert
@@ -224,6 +273,7 @@ require_cmd docker
 require_cmd curl
 require_cmd rsync
 require_cmd htpasswd
+require_cmd dig
 resolve_compose_cmd
 [ -n "${CONTAINER_NAME}" ] || fail "Container name must not be empty"
 
@@ -376,7 +426,7 @@ log "[8/8] Verifying mesh DNS and runtime endpoint"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
-resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+resolved_ip="$(wait_for_dns_contract "${DNS_WAIT_RETRIES}" "${DNS_WAIT_DELAY_SECONDS}" || true)"
 dns_validated="false"
 if [ -n "${resolved_ip}" ]; then
   if validate_resolved_ip "${resolved_ip}"; then
@@ -390,10 +440,13 @@ else
 fi
 
 if [ "${dns_validated}" = "true" ]; then
-  curl --silent --show-error --fail --insecure "https://${DOMAIN}/api/sites" >/dev/null \
+  curl --silent --show-error --fail --insecure \
+    --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
+    "https://${DOMAIN}/api/sites" >/dev/null \
     || fail "Ingress health check failed for https://${DOMAIN}/api/sites"
 else
   curl --silent --show-error --fail --insecure \
+    --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
     --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
     "https://${DOMAIN}/api/sites" >/dev/null \
     || fail "Ingress health check failed for https://${DOMAIN}/api/sites using NETBIRD_DEVICE_IP override"

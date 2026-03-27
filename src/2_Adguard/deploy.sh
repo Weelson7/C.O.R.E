@@ -16,11 +16,17 @@ set -euo pipefail
 
 SERVICE_NAME="core-adguard"
 IMAGE_TAG="core/adguard:local"
+DOMAIN="dns.core"
 INSTALL_DIR="/opt/core/adguard"
 BUILD_DIR="${INSTALL_DIR}/build"
 WORK_DIR="${INSTALL_DIR}/work"
 CONF_DIR="${INSTALL_DIR}/conf"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+NGINX_SSL_DIR="/etc/nginx/ssl"
+NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
+NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
+NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
 ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
 ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
@@ -52,6 +58,16 @@ DEFAULT_REWRITE_DOMAINS=(
 
 declare -a REWRITE_HOSTS=()
 declare -a REWRITE_IPS=()
+declare -a KNOWN_INGRESS_DOMAINS=(
+	"dns.core"
+	"index.core"
+	"jellyfin.core"
+	"suwayomi.core"
+	"kasm.core"
+	"ttyd.core"
+	"supervisor.core"
+	"doom.zenith.su"
+)
 
 log() {
 	echo "[core-adguard] $*"
@@ -296,6 +312,91 @@ EOF
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
 }
 
+provision_tls_material() {
+	local tmp_cert
+	local tmp_key
+
+	mkcert -install
+	tmp_cert="$(mktemp /tmp/core-adguard-cert.XXXXXX.pem)"
+	tmp_key="$(mktemp /tmp/core-adguard-key.XXXXXX.pem)"
+	mkcert -cert-file "${tmp_cert}" -key-file "${tmp_key}" "${DOMAIN}"
+
+	sudo mkdir -p "${NGINX_SSL_DIR}"
+	sudo mv -f "${tmp_cert}" "${NGINX_CERT_FILE}"
+	sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
+	sudo chmod 640 "${NGINX_CERT_FILE}"
+	sudo chmod 600 "${NGINX_KEY_FILE}"
+}
+
+write_nginx_site() {
+	sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${NGINX_CERT_FILE};
+    ssl_certificate_key ${NGINX_KEY_FILE};
+
+    location / {
+        proxy_pass         http://127.0.0.1:${ADMIN_PANEL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+    }
+
+    access_log /var/log/nginx/core-adguard.access.log;
+    error_log  /var/log/nginx/core-adguard.error.log warn;
+}
+EOF
+}
+
+configure_nginx_ingress() {
+	log "Configuring Nginx ingress for ${DOMAIN}"
+	provision_tls_material
+	write_nginx_site
+
+	sudo ln -sfn "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
+	sudo rm -f /etc/nginx/sites-enabled/default
+
+	sudo nginx -t
+	sudo systemctl enable nginx
+	sudo systemctl restart nginx
+}
+
+probe_ingress_domains() {
+	local domain
+	local status
+
+	log "Ingress probe summary (best-effort)"
+	for domain in "${KNOWN_INGRESS_DOMAINS[@]}"; do
+		status="$(curl --silent --show-error --insecure --max-time 5 --output /dev/null \
+			--write-out '%{http_code}' \
+			--resolve "${domain}:443:${NETBIRD_DEVICE_IP}" \
+			"https://${domain}" 2>/dev/null || true)"
+
+		case "${status}" in
+			200|301|302|401|403)
+				log "Ingress OK: ${domain} (HTTP ${status})"
+				;;
+			*)
+				log "Ingress not ready: ${domain} (HTTP ${status:-<none>})"
+				;;
+		esac
+	done
+}
+
 open_firewall_admin_port() {
 	if [ "${ALLOW_UFW_ADMIN_PORT}" != "true" ]; then
 		return 0
@@ -385,6 +486,7 @@ sync_admin_panel_mapping_from_config() {
 	sync_admin_panel_bind_from_config
 	write_compose_file
 	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
+	configure_nginx_ingress
 	sleep 2
 }
 
@@ -544,13 +646,15 @@ require_cmd apt
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (target IP for default DNS rewrites)"
 
 sudo apt update -y
-sudo apt install -y ca-certificates curl tar dnsutils
+sudo apt install -y ca-certificates curl tar dnsutils nginx mkcert
 install_container_stack
 
 require_cmd curl
 require_cmd tar
 require_cmd docker
 require_cmd dig
+require_cmd nginx
+require_cmd mkcert
 require_cmd ss
 require_cmd awk
 require_cmd grep
@@ -577,6 +681,9 @@ write_dockerfile
 log "[6/9] Starting container runtime"
 start_single
 
+log "[6.5/9] Configuring Nginx ingress for ${DOMAIN}"
+configure_nginx_ingress
+
 log "[7/9] Waiting for setup wizard completion"
 wait_for_setup_completion
 
@@ -588,9 +695,11 @@ validate_rewrites
 log "[9/9] Running final validation"
 sync_admin_panel_mapping_from_config
 final_validation
+probe_ingress_domains
 
 echo
 log "Deployment complete and configuration checks passed"
 log "Control panel: http://localhost:${ADMIN_PANEL_PORT}"
+log "Ingress URL: https://${DOMAIN}"
 log "Container status: sudo docker ps --filter name=${SERVICE_NAME}"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"

@@ -8,6 +8,7 @@
 - [Files](#files)
 
 ## Infos
+- Operational status: Functional.
 - What it is: A containerized DNS control-plane service based on AdGuard Home, deployed as a single-node runtime.
 - What it does: Hosts DNS filtering/rewrites for `.core` service discovery and provides an operator-driven setup and validation flow.
 - Why this service exists in C.O.R.E: It is the local DNS authority used to map service hostnames (for example `index.core`) to mesh-reachable node IPs.
