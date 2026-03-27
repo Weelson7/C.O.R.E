@@ -5,9 +5,20 @@ set -euo pipefail
 PURGE_PACKAGES="${PURGE_PACKAGES:-true}"
 FORCE="${FORCE:-false}"
 NETBIRD_STATUS_FILE="/tmp/core-netbird-status.txt"
+NETBIRD_BIN=""
 
 log() {
   echo "[core-netbird:wipe] $*"
+}
+
+resolve_netbird_bin() {
+  if command -v netbird >/dev/null 2>&1; then
+    NETBIRD_BIN="$(command -v netbird)"
+  elif [ -x "/snap/bin/netbird" ]; then
+    NETBIRD_BIN="/snap/bin/netbird"
+  else
+    NETBIRD_BIN=""
+  fi
 }
 
 confirm() {
@@ -41,9 +52,8 @@ confirm
 ensure_ubuntu
 
 log "Stopping Netbird runtime if present"
-if command -v netbird >/dev/null 2>&1; then
-  sudo netbird down >/dev/null 2>&1 || true
-fi
+resolve_netbird_bin
+[ -n "${NETBIRD_BIN}" ] && sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
 
 log "Removing repository and runtime artifacts"
 sudo rm -f /etc/apt/sources.list.d/netbird.list
@@ -53,7 +63,10 @@ sudo rm -rf /etc/netbird /var/lib/netbird /var/log/netbird
 
 if [ "${PURGE_PACKAGES}" = "true" ]; then
   log "Purging packages installed by deploy.sh"
-  sudo apt purge -y netbird ca-certificates curl gnupg || true
+  sudo apt purge -y netbird || true
+  if command -v snap >/dev/null 2>&1 && sudo snap list netbird >/dev/null 2>&1; then
+    sudo snap remove netbird || true
+  fi
   sudo apt autoremove -y || true
   sudo apt clean || true
 else

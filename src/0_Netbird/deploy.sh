@@ -13,6 +13,7 @@ NETBIRD_MGMT_URL="${NETBIRD_MGMT_URL:-}"
 NETBIRD_ADMIN_URL="${NETBIRD_ADMIN_URL:-}"
 NETBIRD_IFACE_BLACKLIST="${NETBIRD_IFACE_BLACKLIST:-}"
 NETBIRD_STATUS_FILE="/tmp/core-netbird-status.txt"
+NETBIRD_BIN=""
 
 log() {
   echo "[core-netbird] $*"
@@ -25,6 +26,29 @@ fail() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+resolve_netbird_bin() {
+  if command -v netbird >/dev/null 2>&1; then
+    NETBIRD_BIN="$(command -v netbird)"
+  elif [ -x "/snap/bin/netbird" ]; then
+    NETBIRD_BIN="/snap/bin/netbird"
+  else
+    NETBIRD_BIN=""
+  fi
+}
+
+install_netbird() {
+  if sudo apt install -y netbird; then
+    return 0
+  fi
+
+  log "Apt package 'netbird' unavailable; falling back to snap"
+  if ! command -v snap >/dev/null 2>&1; then
+    sudo apt install -y snapd
+  fi
+
+  sudo snap install netbird
 }
 
 ensure_ubuntu() {
@@ -54,11 +78,12 @@ ensure_value() {
 }
 
 is_netbird_connected() {
-  if ! command -v netbird >/dev/null 2>&1; then
+  resolve_netbird_bin
+  if [ -z "${NETBIRD_BIN}" ]; then
     return 1
   fi
 
-  if sudo netbird status 2>/dev/null | grep -qiE 'connected|management:[[:space:]]*connected'; then
+  if sudo "${NETBIRD_BIN}" status 2>/dev/null | grep -qiE 'connected|management:[[:space:]]*connected'; then
     return 0
   fi
 
@@ -94,8 +119,9 @@ sudo apt update -y
 sudo apt install -y ca-certificates
 
 log "[2/4] Installing Netbird agent"
-sudo apt install -y netbird
-require_cmd netbird
+install_netbird
+resolve_netbird_bin
+[ -n "${NETBIRD_BIN}" ] || fail "Netbird installed but binary was not found"
 
 if is_netbird_connected; then
   log "Node is already connected to Netbird. Re-registering with provided setup key."
@@ -103,11 +129,11 @@ fi
 
 log "[3/4] Registering node with Netbird network"
 mapfile -t NB_UP_ARGS < <(build_up_args)
-sudo netbird down >/dev/null 2>&1 || true
-sudo netbird "${NB_UP_ARGS[@]}"
+sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
+sudo "${NETBIRD_BIN}" "${NB_UP_ARGS[@]}"
 
 log "[4/4] Verifying Netbird runtime status"
-sudo netbird status >"${NETBIRD_STATUS_FILE}" 2>/dev/null || fail "Netbird status check failed"
+sudo "${NETBIRD_BIN}" status >"${NETBIRD_STATUS_FILE}" 2>/dev/null || fail "Netbird status check failed"
 cat "${NETBIRD_STATUS_FILE}"
 
 if ! grep -qiE 'connected|management:[[:space:]]*connected' "${NETBIRD_STATUS_FILE}"; then
@@ -116,5 +142,5 @@ fi
 
 echo
 log "Deployment complete and node enrollment checks passed"
-log "Runtime status: sudo netbird status"
-log "Node debug output: sudo netbird status --detail"
+log "Runtime status: sudo ${NETBIRD_BIN} status"
+log "Node debug output: sudo ${NETBIRD_BIN} status --detail"
