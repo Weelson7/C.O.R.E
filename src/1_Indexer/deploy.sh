@@ -31,6 +31,8 @@ IMAGE_TAG="${IMAGE_TAG:-core/indexer:local}"
 CONTAINER_NAME="core-indexer"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
 COMPOSE_CMD=()
+API_HEALTH_RETRIES="${API_HEALTH_RETRIES:-30}"
+API_HEALTH_DELAY_SECONDS="${API_HEALTH_DELAY_SECONDS:-2}"
 
 log() {
   echo "[core-indexer] $*"
@@ -165,6 +167,21 @@ validate_resolved_ip() {
   fi
 
   fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
+}
+
+wait_for_local_api_health() {
+  local retries="$1"
+  local delay="$2"
+  local i
+
+  for i in $(seq 1 "${retries}"); do
+    if curl --silent --show-error --fail "http://127.0.0.1:${API_PORT}/api/sites" >/dev/null; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+
+  return 1
 }
 
 ensure_ubuntu
@@ -327,7 +344,11 @@ log "[7/8] Building and starting containerized API"
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${CONTAINER_NAME} is not running"
 
-curl --silent --show-error --fail "http://127.0.0.1:${API_PORT}/api/sites" >/dev/null || fail "Indexer API health check failed at /api/sites"
+if ! wait_for_local_api_health "${API_HEALTH_RETRIES}" "${API_HEALTH_DELAY_SECONDS}"; then
+  log "Indexer API did not become healthy in time; showing recent container logs"
+  sudo docker logs --tail 80 "${CONTAINER_NAME}" || true
+  fail "Indexer API health check failed at /api/sites"
+fi
 
 log "[8/8] Verifying mesh DNS and runtime endpoint"
 require_cmd netbird
