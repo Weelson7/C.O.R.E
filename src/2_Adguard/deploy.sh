@@ -223,7 +223,7 @@ COPY AdGuardHome/ ./
 
 RUN chmod +x /opt/adguardhome/AdGuardHome
 
-EXPOSE 53/tcp 53/udp 67/udp 68/tcp 68/udp 80/tcp 3000/tcp 443/tcp
+EXPOSE 53/tcp 53/udp 67/udp 68/tcp 68/udp 8080/tcp 3000/tcp 443/tcp
 
 ENTRYPOINT ["/opt/adguardhome/AdGuardHome"]
 CMD ["-c", "/opt/adguardhome/conf/AdGuardHome.yaml", "-w", "/opt/adguardhome/work"]
@@ -240,7 +240,7 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-      - "80:80/tcp"
+      - "8080:8080/tcp"
       - "${ADMIN_PANEL_PORT}:3000/tcp"
       - "443:443/tcp"
     volumes:
