@@ -33,6 +33,7 @@ NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
 HTPASSWD_USER="${HTPASSWD_USER:-}"
 COMPOSE_CMD=()
+DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
 log() {
   echo "[core-supervisor] $*"
@@ -86,12 +87,28 @@ resolve_compose_cmd() {
     return 0
   fi
 
-  if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD=(sudo docker-compose)
-    return 0
-  fi
+  fail "Docker Compose v2 plugin is not available after installation"
+}
 
-  fail "No Docker Compose command available after installation"
+install_compose_plugin_manually() {
+  local arch
+  local plugin_arch
+  local plugin_dir="/usr/local/lib/docker/cli-plugins"
+  local plugin_path="${plugin_dir}/docker-compose"
+  local plugin_url=""
+
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64|amd64) plugin_arch="x86_64" ;;
+    aarch64|arm64) plugin_arch="aarch64" ;;
+    *) fail "Unsupported architecture for compose plugin fallback: ${arch}" ;;
+  esac
+
+  plugin_url="https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_PLUGIN_VERSION}/docker-compose-linux-${plugin_arch}"
+
+  sudo mkdir -p "${plugin_dir}"
+  sudo curl -fsSL "${plugin_url}" -o "${plugin_path}"
+  sudo chmod +x "${plugin_path}"
 }
 
 install_container_stack() {
@@ -99,8 +116,9 @@ install_container_stack() {
     return 0
   fi
 
-  log "Package docker-compose-plugin unavailable; falling back to docker-compose"
-  sudo apt install -y docker.io docker-compose
+  log "Package docker-compose-plugin unavailable; installing Docker Compose plugin manually"
+  sudo apt install -y docker.io
+  install_compose_plugin_manually
 }
 
 validate_resolved_ip() {
