@@ -470,15 +470,34 @@ apply_rewrites_via_api() {
 	local host
 	local ip
 	local payload
+	local existing_rewrites
+	local stale_ip
 
 	ensure_value ADGUARD_ADMIN_USER "Enter AdGuard admin username (for rewrite API)"
 	ensure_secret_value ADGUARD_ADMIN_PASSWORD "Enter AdGuard admin password (for rewrite API)"
 
 	log "Applying default DNS rewrites through AdGuard API"
+	existing_rewrites="$(curl --silent --show-error --fail \
+		-u "${ADGUARD_ADMIN_USER}:${ADGUARD_ADMIN_PASSWORD}" \
+		"http://127.0.0.1:${ADMIN_PANEL_PORT}/control/rewrite/list" 2>/dev/null || echo '[]')"
+
 	for idx in "${!REWRITE_HOSTS[@]}"; do
 		host="${REWRITE_HOSTS[${idx}]}"
 		ip="${REWRITE_IPS[${idx}]}"
 		payload="{\"domain\":\"${host}\",\"answer\":\"${ip}\"}"
+
+		while IFS= read -r stale_ip; do
+			[ -n "${stale_ip}" ] || continue
+			if [ "${stale_ip}" = "${ip}" ]; then
+				continue
+			fi
+			curl --silent --show-error --fail \
+				-u "${ADGUARD_ADMIN_USER}:${ADGUARD_ADMIN_PASSWORD}" \
+				-H 'Content-Type: application/json' \
+				-X POST \
+				-d "{\"domain\":\"${host}\",\"answer\":\"${stale_ip}\"}" \
+				"http://127.0.0.1:${ADMIN_PANEL_PORT}/control/rewrite/delete" >/dev/null || true
+		done < <(printf '%s' "${existing_rewrites}" | jq -r --arg host "${host}" '.[] | select(.domain == $host) | .answer')
 
 		if ! curl --silent --show-error --fail \
 			-u "${ADGUARD_ADMIN_USER}:${ADGUARD_ADMIN_PASSWORD}" \
@@ -544,7 +563,7 @@ require_cmd apt
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (target IP for default DNS rewrites)"
 
 sudo apt update -y
-sudo apt install -y ca-certificates curl tar dnsutils
+sudo apt install -y ca-certificates curl tar dnsutils jq
 install_container_stack
 
 require_cmd curl
@@ -554,6 +573,7 @@ require_cmd dig
 require_cmd ss
 require_cmd awk
 require_cmd grep
+require_cmd jq
 require_cmd netbird
 resolve_compose_cmd
 
