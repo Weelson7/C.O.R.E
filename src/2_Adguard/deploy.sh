@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 # CONTROL_HEADER: Service 2 - C.O.R.E AdGuard Home (dns.core)
 
@@ -278,7 +278,7 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-			- "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
+      - "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
 EOF
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
 			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
