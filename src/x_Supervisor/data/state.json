@@ -1,0 +1,20 @@
+{
+  "supervisor": {
+    "activeNodeId": "node-0",
+    "primaryNodeId": "node-0",
+    "subSupervisorNodeId": "node-1",
+    "automaticTakeover": true,
+    "forceActiveNodeId": null,
+    "maintenance": {
+      "nodes": [],
+      "services": []
+    }
+  },
+  "policy": {
+    "promotionTimeoutSeconds": 1200,
+    "betaSyncInterval": "daily",
+    "gammaBackupInterval": "daily-incremental-weekly-full",
+    "gammaRetentionMonths": 12
+  },
+  "serviceState": {}
+}

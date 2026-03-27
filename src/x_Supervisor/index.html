@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>C.O.R.E x_Supervisor Console</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="logo.png" alt="C.O.R.E logo" class="logo" />
+      <div>
+        <h1>C.O.R.E x_Supervisor</h1>
+        <p>Mesh control plane for role orchestration, failover, and backup policy</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="active-supervisor" class="badge info">active: unknown</span>
+      <button id="refresh-btn" class="btn small">Refresh</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <nav class="sidebar" aria-label="Supervisor sections">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="services">Services</button>
+      <button class="tab" data-view="nodes">Nodes</button>
+      <button class="tab" data-view="cluster">Cluster</button>
+      <button class="tab" data-view="remediation">Remediation</button>
+      <button class="tab" data-view="events">Events</button>
+      <button class="tab" data-view="actions">Actions</button>
+      <button class="tab" data-view="runbook">Runbook</button>
+    </nav>
+
+    <section class="content">
+      <div id="banner" class="banner info">Loading supervisor data...</div>
+
+      <section id="view-dashboard" class="view active">
+        <div class="metric-grid">
+          <article class="metric-card">
+            <h2>Services</h2>
+            <p id="metric-services">0</p>
+          </article>
+          <article class="metric-card">
+            <h2>Nodes</h2>
+            <p id="metric-nodes">0</p>
+          </article>
+          <article class="metric-card">
+            <h2>Failover Active</h2>
+            <p id="metric-failover">0</p>
+          </article>
+          <article class="metric-card">
+            <h2>Unhealthy Nodes</h2>
+            <p id="metric-unhealthy">0</p>
+          </article>
+        </div>
+        <div class="panel">
+          <h3>Supervisor Policy Snapshot</h3>
+          <ul id="policy-list" class="kv-list"></ul>
+        </div>
+      </section>
+
+      <section id="view-services" class="view">
+        <div class="panel">
+          <h3>Service Registry</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Domain</th>
+                <th>Containerized</th>
+                <th>Alpha</th>
+                <th>Beta</th>
+                <th>Gamma</th>
+              </tr>
+            </thead>
+            <tbody id="services-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-nodes" class="view">
+        <div class="panel">
+          <h3>Node Registry</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Hostname</th>
+                <th>Netbird IP</th>
+                <th>Healthy</th>
+                <th>Supervisor</th>
+                <th>Sub-Supervisor</th>
+                <th>Alpha Count</th>
+                <th>Beta Count</th>
+                <th>Gamma Count</th>
+              </tr>
+            </thead>
+            <tbody id="nodes-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-events" class="view">
+        <div class="panel">
+          <h3>Immutable Action Log</h3>
+          <div id="events-list" class="event-list"></div>
+        </div>
+      </section>
+
+      <section id="view-cluster" class="view">
+        <div class="panel">
+          <h3>Cluster Consensus State</h3>
+          <div id="consensus-details" class="kv-list"></div>
+        </div>
+      </section>
+
+      <section id="view-remediation" class="view">
+        <div class="panel">
+          <h3>Node Remediation & Health</h3>
+          <div id="remediation-details" class="kv-list"></div>
+        </div>
+      </section>
+
+      <section id="view-actions" class="view">
+        <div class="panel">
+          <h3>Operator Actions</h3>
+          <p>Generate backend shell commands for execution on the supervisor host.</p>
+
+          <div class="form-grid">
+            <div>
+              <label for="action-service">Service</label>
+              <select id="action-service"></select>
+            </div>
+            <div>
+              <label for="action-role">Role</label>
+              <select id="action-role">
+                <option value="alpha">alpha</option>
+                <option value="beta">beta</option>
+                <option value="gamma">gamma</option>
+              </select>
+            </div>
+            <div>
+              <label for="action-node">Node ID</label>
+              <select id="action-node"></select>
+            </div>
+            <div class="form-row">
+              <button id="btn-assign" class="btn">Generate assign-role</button>
+            </div>
+
+            <div>
+              <label for="health-node">Node Health Target</label>
+              <select id="health-node"></select>
+            </div>
+            <div>
+              <label for="health-value">Healthy</label>
+              <select id="health-value">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <button id="btn-health" class="btn">Generate set-node-health</button>
+            </div>
+
+            <div>
+              <label for="force-node">Force Active Supervisor</label>
+              <select id="force-node"></select>
+            </div>
+            <div class="form-row">
+              <button id="btn-force" class="btn warn">Generate set-force-active</button>
+            </div>
+
+            <div class="form-row wide">
+              <button id="btn-cycle" class="btn">Generate run-cycle --execute</button>
+            </div>
+          </div>
+
+          <div style="border-top: 1px solid var(--border-subtle); margin-top: 1.2rem; padding-top: 1.2rem;">
+            <h4>Node Remediation & Cluster Management</h4>
+            
+            <div class="form-grid">
+              <div>
+                <label for="remediation-node">Remediation Target Node</label>
+                <select id="remediation-node"></select>
+              </div>
+              <div class="form-row">
+                <button id="btn-remediate-node" class="btn">Generate assess-and-remediate</button>
+              </div>
+
+              <div>
+                <label for="quarantine-node">Quarantine Node</label>
+                <select id="quarantine-node"></select>
+              </div>
+              <div class="form-row">
+                <button id="btn-quarantine-node" class="btn warn">Generate quarantine</button>
+              </div>
+
+              <div class="form-row wide">
+                <button id="btn-cleanup-backups" class="btn">Generate cleanup_backups</button>
+              </div>
+
+              <div class="form-row wide">
+                <button id="btn-cluster-init" class="btn">Generate cluster init</button>
+              </div>
+
+              <div class="form-row wide">
+                <button id="btn-cluster-health" class="btn">Generate cluster health check</button>
+              </div>
+            </div>
+          </div>
+
+          <label for="command-output">Generated command</label>
+          <textarea id="command-output" rows="5" readonly></textarea>
+        </div>
+      </section>
+
+      <section id="view-runbook" class="view">
+        <div class="panel">
+          <h3>Runbook</h3>
+          <ol>
+            <li>Run <code>bin/supervisor.sh discover-nodes</code> to refresh Netbird inventory.</li>
+            <li>Run <code>bin/supervisor.sh run-cycle --execute</code> to evaluate failover and apply actions.</li>
+            <li>Use <code>set-maintenance</code> before planned disruption.</li>
+            <li>Use manual overrides only when automation cannot satisfy policy constraints.</li>
+          </ol>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

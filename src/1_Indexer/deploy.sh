@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# CONTROL_HEADER: Service 1 - C.O.R.E Indexer (index.core)
+
+# Containerized architecture contract alignment:
+# 1) dependency installation
+# 2) TLS material provisioning
+# 3) container activation
+# 4) ingress configuration validation
+# 5) DNS resolution verification
+# 6) runtime health confirmation
+
+DOMAIN="index.core"
+NGINX_SSL_DIR="/etc/nginx/ssl"
+NGINX_CERT_FILE="${NGINX_SSL_DIR}/index.core.crt"
+NGINX_KEY_FILE="${NGINX_SSL_DIR}/index.core.key"
+NGINX_SITE_FILE="/etc/nginx/sites-available/index.core"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/index.core"
+WEB_ROOT="/var/www/core-indexer"
+API_PORT="${API_PORT:-5001}"
+HTPASSWD_FILE="/etc/nginx/.htpasswd_core"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+API_SOURCE_DIR="${API_SOURCE_DIR:-${SCRIPT_DIR}}"
+API_ENTRYPOINT="${API_ENTRYPOINT:-${API_SOURCE_DIR}/app.py}"
+INSTALL_DIR="/opt/core/indexer"
+COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
+IMAGE_TAG="${IMAGE_TAG:-core/indexer:local}"
+CONTAINER_NAME="core-indexer"
+NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
+
+log() {
+  echo "[core-indexer] $*"
+}
+
+fail() {
+  echo "[core-indexer] ERROR: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+ensure_ubuntu() {
+  [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || fail "This script is intended for Ubuntu hosts (detected: ${ID:-unknown})"
+}
+
+ensure_value() {
+  local var_name="$1"
+  local prompt="$2"
+  local current_value="${!var_name:-}"
+
+  while [ -z "${current_value}" ]; do
+    read -r -p "${prompt}: " current_value
+  done
+
+  printf -v "${var_name}" '%s' "${current_value}"
+}
+
+write_frontend_assets() {
+  local required_assets=(index.html style.css logic.js)
+  local asset
+
+  sudo mkdir -p "${WEB_ROOT}"
+
+  for asset in "${required_assets[@]}"; do
+    [ -f "${SCRIPT_DIR}/${asset}" ] || fail "Missing frontend asset: ${SCRIPT_DIR}/${asset}"
+    sudo cp -f "${SCRIPT_DIR}/${asset}" "${WEB_ROOT}/${asset}"
+  done
+
+  if [ -f "${SCRIPT_DIR}/logo.png" ]; then
+    sudo cp -f "${SCRIPT_DIR}/logo.png" "${WEB_ROOT}/logo.png"
+  fi
+
+  sudo chown -R root:root "${WEB_ROOT}"
+  sudo chmod -R 755 "${WEB_ROOT}"
+}
+
+validate_resolved_ip() {
+  local resolved_ip="$1"
+
+  if [ "${resolved_ip}" = "${NETBIRD_DEVICE_IP}" ]; then
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${resolved_ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
+    log "DNS currently resolves to configured failover IP (${NETBIRD_FAILOVER_IP})"
+    return 0
+  fi
+
+  if [ -n "${NETBIRD_FAILOVER_IP}" ]; then
+    fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP} or ${NETBIRD_FAILOVER_IP}, got ${resolved_ip}"
+  fi
+
+  fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
+}
+
+ensure_ubuntu
+require_cmd sudo
+require_cmd apt
+require_cmd getent
+require_cmd awk
+
+ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
+ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
+
+if [ ! -f "${API_ENTRYPOINT}" ]; then
+  fail "API entrypoint not found at ${API_ENTRYPOINT}. Set API_SOURCE_DIR or API_ENTRYPOINT before running."
+fi
+
+log "[1/8] Installing deployment dependencies"
+sudo apt update -y
+sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync docker.io docker-compose-plugin
+
+require_cmd mkcert
+require_cmd nginx
+require_cmd docker
+require_cmd curl
+require_cmd rsync
+require_cmd htpasswd
+sudo docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available"
+
+sudo systemctl enable docker
+sudo systemctl restart docker
+
+log "[2/8] Provisioning TLS material for ${DOMAIN}"
+mkcert -install
+
+tmp_cert="$(mktemp /tmp/core-indexer-cert.XXXXXX.pem)"
+tmp_key="$(mktemp /tmp/core-indexer-key.XXXXXX.pem)"
+mkcert -cert-file "${tmp_cert}" -key-file "${tmp_key}" "${DOMAIN}"
+
+sudo mkdir -p "${NGINX_SSL_DIR}"
+sudo mv -f "${tmp_cert}" "${NGINX_CERT_FILE}"
+sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
+sudo chmod 640 "${NGINX_CERT_FILE}"
+sudo chmod 600 "${NGINX_KEY_FILE}"
+
+log "[3/8] Deploying static frontend assets"
+write_frontend_assets
+
+log "[4/8] Preparing container build context at ${INSTALL_DIR}"
+sudo mkdir -p "${INSTALL_DIR}"
+sudo rsync -a --delete "${API_SOURCE_DIR}/" "${INSTALL_DIR}/"
+
+if [ ! -f "${INSTALL_DIR}/requirements.txt" ]; then
+  log "requirements.txt not found; generating minimal fallback"
+  printf '%s\n' 'flask' | sudo tee "${INSTALL_DIR}/requirements.txt" >/dev/null
+fi
+
+sudo tee "${DOCKERFILE_PATH}" >/dev/null <<EOF
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV FLASK_ENV=production
+ENV PORT=${API_PORT}
+ENV PYTHONUNBUFFERED=1
+EXPOSE ${API_PORT}
+
+CMD ["python", "app.py"]
+EOF
+
+sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
+services:
+  indexer:
+    container_name: ${CONTAINER_NAME}
+    build:
+      context: ${INSTALL_DIR}
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      - PORT=${API_PORT}
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "127.0.0.1:${API_PORT}:${API_PORT}"
+EOF
+
+log "[5/8] Enforcing ingress authentication baseline"
+if [ ! -f "${HTPASSWD_FILE}" ]; then
+  sudo htpasswd -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+else
+  sudo htpasswd "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+fi
+sudo chmod 640 "${HTPASSWD_FILE}"
+
+log "[6/8] Writing Nginx ingress config for ${DOMAIN}"
+sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${NGINX_CERT_FILE};
+    ssl_certificate_key ${NGINX_KEY_FILE};
+
+    auth_basic           "C.O.R.E. - restricted";
+    auth_basic_user_file ${HTPASSWD_FILE};
+
+    root  ${WEB_ROOT};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass         http://127.0.0.1:${API_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        add_header         Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff"    always;
+    add_header Referrer-Policy        "no-referrer" always;
+
+    access_log /var/log/nginx/core-indexer.access.log;
+    error_log  /var/log/nginx/core-indexer.error.log warn;
+}
+EOF
+
+sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
+sudo rm -f /etc/nginx/sites-enabled/index.zenith.su /etc/nginx/sites-enabled/default
+
+log "Validating Nginx configuration"
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl restart nginx
+
+log "[7/8] Building and starting containerized API"
+sudo docker compose -f "${COMPOSE_FILE}" up -d --build
+
+container_state="$(sudo docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+[ "${container_state}" = "running" ] || fail "Container ${CONTAINER_NAME} is not running"
+
+curl --silent --show-error --fail "http://127.0.0.1:${API_PORT}/api/sites" >/dev/null || fail "Indexer API health check failed at /api/sites"
+
+log "[8/8] Verifying mesh DNS and runtime endpoint"
+require_cmd netbird
+sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
+
+resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+[ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard and Netbird nameserver group"
+validate_resolved_ip "${resolved_ip}"
+
+curl --silent --show-error --fail --insecure "https://${DOMAIN}/api/sites" >/dev/null || fail "Ingress health check failed for https://${DOMAIN}/api/sites"
+
+echo
+log "Deployment complete and container runtime checks passed"
+log "URL: https://${DOMAIN}"
+log "Container logs: sudo docker logs -f ${CONTAINER_NAME}"
+log "Compose stack: sudo docker compose -f ${COMPOSE_FILE} ps"

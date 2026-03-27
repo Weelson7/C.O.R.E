@@ -1,0 +1,171 @@
+[
+  {
+    "id": "0_Netbird",
+    "name": "Netbird",
+    "status": "healthy",
+    "containerized": false,
+    "storageLocation": "/var/lib/netbird",
+    "domain": "",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "1_Indexer",
+    "name": "Indexer",
+    "status": "healthy",
+    "containerized": true,
+    "storageLocation": "/opt/core/indexer",
+    "domain": "index.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": "node-1",
+      "gamma": null
+    }
+  },
+  {
+    "id": "2_Adguard",
+    "name": "AdGuard Home",
+    "status": "healthy",
+    "containerized": true,
+    "storageLocation": "/opt/core/adguard",
+    "domain": "dns.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": "node-1",
+      "gamma": "node-2"
+    }
+  },
+  {
+    "id": "3_Jellyfin",
+    "name": "Jellyfin",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/jellyfin",
+    "domain": "jellyfin.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "4_Suwayomi",
+    "name": "Suwayomi",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/suwayomi",
+    "domain": "suwayomi.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "5_Kasm",
+    "name": "Kasm",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/kasm",
+    "domain": "kasm.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "6_Crafty",
+    "name": "Crafty",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/crafty",
+    "domain": "crafty.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "7_ttyd",
+    "name": "ttyd",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/ttyd",
+    "domain": "ttyd.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "8_qBittorrent",
+    "name": "qBittorrent",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/qbittorrent",
+    "domain": "qbittorrent.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "9_Jupyter",
+    "name": "Jupyter",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/jupyter",
+    "domain": "jupyter.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "10_Stirling",
+    "name": "Stirling",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/stirling",
+    "domain": "stirling.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "11_Doom",
+    "name": "Doom",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/doom",
+    "domain": "doom.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
+    "id": "x_Supervisor",
+    "name": "Supervisor",
+    "status": "healthy",
+    "containerized": true,
+    "storageLocation": "/opt/core/supervisor",
+    "domain": "supervisor.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": "node-1",
+      "gamma": null
+    }
+  }
+]

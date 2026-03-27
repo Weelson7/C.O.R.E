@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>C.O.R.E | Service Index</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <img src="logo.png" alt="C.O.R.E logo" class="logo" />
+      <div class="title-block">
+        <h1>C.O.R.E Service Index</h1>
+        <p class="subtitle">Clustered Orchestrated Repurposed Environment</p>
+      </div>
+      <span class="badge" id="status-badge">Checking</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="meta-bar">
+      <span><strong id="service-count">0</strong> services discovered</span>
+      <span class="sep">|</span>
+      <span id="last-refresh">last refresh: pending</span>
+      <span class="sep">|</span>
+      <span>domain namespace: <code>*.core</code></span>
+      <span class="sep">|</span>
+      <span id="ingress-path">ingress path: <code>supervisor</code></span>
+    </section>
+
+    <section class="topology-strip" aria-label="Supervisor topology">
+      <span class="node-pill">SUPERVISOR <small>node 0 / default alpha path</small></span>
+      <span class="node-pill">SUB-SUPERVISOR <small>failover takeover path</small></span>
+      <span class="node-pill">ROLES <small>alpha / beta / gamma per service</small></span>
+    </section>
+
+    <div id="error-banner" class="error-banner hidden">
+      Index API is unreachable. Manual action required: verify supervisor path backend and Nginx upstream.
+    </div>
+
+    <div id="incident-banner" class="incident-banner hidden">
+      Cluster state: all listed services are online.
+    </div>
+
+    <div id="card-grid" class="card-grid">
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+    </div>
+  </main>
+
+  <footer>
+    Served by Nginx on mesh ingress. Supervisor policy controls service routing and failover.
+  </footer>
+
+  <script src="logic.js"></script>
+</body>
+</html>

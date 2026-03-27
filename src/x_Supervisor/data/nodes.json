@@ -1,0 +1,28 @@
+[
+  {
+    "id": "node-0",
+    "hostname": "supervisor",
+    "netbirdIp": "10.10.0.10",
+    "healthy": true,
+    "isSupervisor": true,
+    "isSubSupervisor": false,
+    "sshHost": "",
+    "alphaServices": [
+      "0_Netbird",
+      "1_Indexer",
+      "2_Adguard",
+      "3_Jellyfin",
+      "4_Suwayomi",
+      "5_Kasm",
+      "6_Crafty",
+      "7_ttyd",
+      "8_qBittorrent",
+      "9_Jupyter",
+      "10_Stirling",
+      "11_Doom",
+      "x_Supervisor"
+    ],
+    "betaServices": [],
+    "gammaServices": []
+  }
+]
