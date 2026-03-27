@@ -133,6 +133,35 @@ EOF
 	fi
 }
 
+is_netbird_bound_to_port_53() {
+	sudo ss -luntp 2>/dev/null | grep -E '(:53[[:space:]]|:53$)' | grep -qi 'netbird'
+}
+
+disable_netbird_dns_usage() {
+	if ! command -v netbird >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if ! sudo netbird status >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if ! is_netbird_bound_to_port_53; then
+		return 0
+	fi
+
+	log "NetBird is bound to port 53; reconfiguring NetBird with DNS disabled"
+	sudo netbird down >/dev/null 2>&1 || true
+	if ! sudo netbird up --disable-dns; then
+		fail "Failed to restart NetBird with --disable-dns"
+	fi
+
+	sleep 1
+	if is_netbird_bound_to_port_53; then
+		fail "NetBird still appears bound to port 53 after --disable-dns"
+	fi
+}
+
 scan_runtime_ports() {
 	local panel_ok="no"
 	local dns_tcp_ok="no"
@@ -371,24 +400,27 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/8] Applying DNS stub-listener mitigation"
+log "[2/9] Applying DNS stub-listener mitigation"
 disable_systemd_resolved_stub_listener
 
-log "[3/8] Using single-node runtime mode"
+log "[3/9] Applying NetBird DNS-port mitigation"
+disable_netbird_dns_usage
+
+log "[4/9] Using single-node runtime mode"
 
 sudo mkdir -p "${INSTALL_DIR}" "${WORK_DIR}" "${CONF_DIR}"
 
-log "[4/8] Downloading AdGuard Home"
+log "[5/9] Downloading AdGuard Home"
 download_adguard_home
 write_dockerfile
 
-log "[5/8] Starting container runtime"
+log "[6/9] Starting container runtime"
 start_single
 
-log "[6/8] Waiting for setup wizard completion"
+log "[7/9] Waiting for setup wizard completion"
 wait_for_setup_completion
 
-log "[7/8] Capturing and validating DNS rewrites"
+log "[8/9] Capturing and validating DNS rewrites"
 capture_rewrite_targets
 if [ "${#REWRITE_HOSTS[@]}" -eq 0 ]; then
 	log "No rewrites requested for validation in this run."
@@ -396,7 +428,7 @@ else
 	validate_each_rewrite_loop
 fi
 
-log "[8/8] Running final validation"
+log "[9/9] Running final validation"
 final_validation
 
 echo
