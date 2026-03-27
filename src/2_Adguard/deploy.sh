@@ -283,28 +283,26 @@ EOF
 
 write_compose_file() {
 	{
-		cat <<EOF
-services:
-  adguard:
-    container_name: ${SERVICE_NAME}
-    image: ${IMAGE_TAG}
-    restart: unless-stopped
-    ports:
-			- "${ADGUARD_DNS_PORT}:53/tcp"
-			- "${ADGUARD_DNS_PORT}:53/udp"
-      - "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
-EOF
+		printf '%s\n' \
+			"services:" \
+			"  adguard:" \
+			"    container_name: ${SERVICE_NAME}" \
+			"    image: ${IMAGE_TAG}" \
+			"    restart: unless-stopped" \
+			"    ports:" \
+			"      - \"${ADGUARD_DNS_PORT}:53/tcp\"" \
+			"      - \"${ADGUARD_DNS_PORT}:53/udp\"" \
+			"      - \"${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp\""
 		if [ "${ADGUARD_FALLBACK_PANEL_PORT}" != "${ADMIN_PANEL_PORT}" ]; then
 			echo "      - \"${ADGUARD_FALLBACK_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp\""
 		fi
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
 			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
 		fi
-		cat <<EOF
-    volumes:
-      - ${WORK_DIR}:/opt/adguardhome/work
-      - ${CONF_DIR}:/opt/adguardhome/conf
-EOF
+		printf '%s\n' \
+			"    volumes:" \
+			"      - ${WORK_DIR}:/opt/adguardhome/work" \
+			"      - ${CONF_DIR}:/opt/adguardhome/conf"
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
 }
 
