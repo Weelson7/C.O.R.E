@@ -191,7 +191,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/core/ttyd/ttyd.env
-ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --cwd "${TTYD_WORKDIR}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} ${TTYD_EXEC_CMD}'
+ExecStart=/bin/bash -lc 'exec "${TTYD_BIN}" --writable --interface 127.0.0.1 --port "${PUBLISHED_HTTP_PORT}" --cwd "${TTYD_WORKDIR}" --check-origin --max-clients "${TTYD_MAX_CLIENTS}" ${TTYD_EXTRA_ARGS} ${TTYD_EXEC_CMD}'
 Restart=always
 RestartSec=2
 
