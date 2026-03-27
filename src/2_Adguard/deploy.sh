@@ -241,7 +241,7 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
       - "80:80/tcp"
-			- "${ADMIN_PANEL_PORT}:3000/tcp"
+      - "${ADMIN_PANEL_PORT}:3000/tcp"
       - "443:443/tcp"
     volumes:
       - ${WORK_DIR}:/opt/adguardhome/work
