@@ -25,8 +25,10 @@ ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
 ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
 ADGUARD_ADMIN_CONTAINER_PORT="${ADGUARD_ADMIN_CONTAINER_PORT:-3000}"
+ADGUARD_FALLBACK_PANEL_PORT="${ADGUARD_FALLBACK_PANEL_PORT:-3000}"
 PUBLISH_HTTPS_PORT="${PUBLISH_HTTPS_PORT:-false}"
 ADGUARD_HTTPS_PORT="${ADGUARD_HTTPS_PORT:-443}"
+ALLOW_UFW_ADMIN_PORT="${ALLOW_UFW_ADMIN_PORT:-true}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 COMPOSE_CMD=()
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
@@ -280,6 +282,9 @@ services:
       - "53:53/udp"
       - "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
 EOF
+		if [ "${ADGUARD_FALLBACK_PANEL_PORT}" != "${ADMIN_PANEL_PORT}" ]; then
+			echo "      - \"${ADGUARD_FALLBACK_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp\""
+		fi
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
 			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
 		fi
@@ -289,6 +294,63 @@ EOF
       - ${CONF_DIR}:/opt/adguardhome/conf
 EOF
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
+}
+
+open_firewall_admin_port() {
+	if [ "${ALLOW_UFW_ADMIN_PORT}" != "true" ]; then
+		return 0
+	fi
+
+	if ! command -v ufw >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if ! sudo ufw status 2>/dev/null | grep -qi '^status:[[:space:]]*active'; then
+		return 0
+	fi
+
+	log "UFW is active; allowing tcp/${ADMIN_PANEL_PORT} for AdGuard admin access"
+	sudo ufw allow "${ADMIN_PANEL_PORT}/tcp" >/dev/null || true
+	if [ "${ADGUARD_FALLBACK_PANEL_PORT}" != "${ADMIN_PANEL_PORT}" ]; then
+		sudo ufw allow "${ADGUARD_FALLBACK_PANEL_PORT}/tcp" >/dev/null || true
+	fi
+}
+
+sync_admin_panel_bind_from_config() {
+	local config_file="${CONF_DIR}/AdGuardHome.yaml"
+	local configured_port=""
+
+	[ -f "${config_file}" ] || return 0
+
+	if sudo grep -Eq '^[[:space:]]*bind_host:[[:space:]]*(127\.0\.0\.1|localhost)[[:space:]]*$' "${config_file}"; then
+		log "AdGuard bind_host is loopback; forcing bind_host to 0.0.0.0 for NetBird reachability"
+		sudo sed -E -i 's/^([[:space:]]*bind_host:[[:space:]]*)(127\.0\.0\.1|localhost)[[:space:]]*$/\10.0.0.0/' "${config_file}"
+	fi
+
+	if sudo grep -Eq '^[[:space:]]*address:[[:space:]]*("|\x27)?(127\.0\.0\.1|localhost):[0-9]+("|\x27)?[[:space:]]*$' "${config_file}"; then
+		log "AdGuard address is loopback; forcing address host to 0.0.0.0"
+		sudo sed -E -i 's/^([[:space:]]*address:[[:space:]]*)("|\x27)?(127\.0\.0\.1|localhost):([0-9]+)("|\x27)?[[:space:]]*$/\10.0.0.0:\4/' "${config_file}"
+	fi
+
+	configured_port="$(sudo awk '
+		/^[[:space:]]*bind_port:[[:space:]]*[0-9]+[[:space:]]*$/ {
+			print $2; exit
+		}
+		/^[[:space:]]*address:[[:space:]]*/ {
+			line=$0
+			sub(/^[[:space:]]*address:[[:space:]]*/, "", line)
+			gsub(/"|\x27/, "", line)
+			n=split(line, parts, ":")
+			if (n >= 2 && parts[n] ~ /^[0-9]+$/) {
+				print parts[n]; exit
+			}
+		}
+	' "${config_file}" 2>/dev/null || true)"
+
+	if printf '%s' "${configured_port}" | grep -Eq '^[0-9]+$' && [ "${configured_port}" != "${ADGUARD_ADMIN_CONTAINER_PORT}" ]; then
+		log "Detected AdGuard admin port ${configured_port}; updating container port mapping"
+		ADGUARD_ADMIN_CONTAINER_PORT="${configured_port}"
+	fi
 }
 
 cleanup_previous_runtime() {
@@ -320,22 +382,7 @@ wait_for_admin_panel_http() {
 }
 
 sync_admin_panel_mapping_from_config() {
-	local config_file="${CONF_DIR}/AdGuardHome.yaml"
-	local configured_port=""
-
-	[ -f "${config_file}" ] || return 0
-
-	configured_port="$(awk '/^[[:space:]]*bind_port:[[:space:]]*[0-9]+[[:space:]]*$/ {print $2; exit}' "${config_file}" 2>/dev/null || true)"
-	if ! printf '%s' "${configured_port}" | grep -Eq '^[0-9]+$'; then
-		return 0
-	fi
-
-	if [ "${configured_port}" = "${ADGUARD_ADMIN_CONTAINER_PORT}" ]; then
-		return 0
-	fi
-
-	log "Detected AdGuard bind_port=${configured_port}; remapping host ${ADMIN_PANEL_PORT} to container ${configured_port}"
-	ADGUARD_ADMIN_CONTAINER_PORT="${configured_port}"
+	sync_admin_panel_bind_from_config
 	write_compose_file
 	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
 	sleep 2
@@ -344,6 +391,7 @@ sync_admin_panel_mapping_from_config() {
 start_single() {
 	log "Building image and starting single-node container"
 	cleanup_previous_runtime
+	sync_admin_panel_bind_from_config
 	sudo docker build -t "${IMAGE_TAG}" "${BUILD_DIR}"
 	write_compose_file
 	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" config >/dev/null || fail "Generated compose file is invalid: ${COMPOSE_FILE}"
@@ -354,6 +402,7 @@ start_single() {
 	state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 	[ "${state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
+	open_firewall_admin_port
 	wait_for_admin_panel_http
 }
 
