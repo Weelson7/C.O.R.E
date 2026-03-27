@@ -20,6 +20,7 @@ CONF_DIR="${INSTALL_DIR}/conf"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
+ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 COMPOSE_CMD=()
 
@@ -176,7 +177,7 @@ scan_runtime_ports() {
 	local dns_tcp_ok="no"
 	local dns_udp_ok="no"
 
-	if is_port_listening_tcp 3000; then
+	if is_port_listening_tcp "${ADMIN_PANEL_PORT}"; then
 		panel_ok="yes"
 	fi
 
@@ -188,7 +189,7 @@ scan_runtime_ports() {
 		dns_udp_ok="yes"
 	fi
 
-	log "Scan: tcp/3000=${panel_ok}, tcp/53=${dns_tcp_ok}, udp/53=${dns_udp_ok}"
+	log "Scan: tcp/${ADMIN_PANEL_PORT}=${panel_ok}, tcp/53=${dns_tcp_ok}, udp/53=${dns_udp_ok}"
 }
 
 query_dns_a() {
@@ -240,7 +241,7 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
       - "80:80/tcp"
-      - "3000:3000/tcp"
+			- "${ADMIN_PANEL_PORT}:3000/tcp"
       - "443:443/tcp"
     volumes:
       - ${WORK_DIR}:/opt/adguardhome/work
@@ -266,14 +267,14 @@ wait_for_setup_completion() {
 	local panel_http_ok=0
 
 	log "Waiting for setup completion"
-	log "Open http://localhost:3000 and complete the AdGuard Home setup wizard."
+	log "Open http://localhost:${ADMIN_PANEL_PORT} and complete the AdGuard Home setup wizard."
 	log "Ensure DNS is configured to listen on port 53 (tcp+udp)."
 
 	while true; do
 		scan_runtime_ports
 
 		panel_http_ok=0
-		if curl -fsS -o /dev/null "http://127.0.0.1:3000"; then
+		if curl -fsS -o /dev/null "http://127.0.0.1:${ADMIN_PANEL_PORT}"; then
 			panel_http_ok=1
 		fi
 
@@ -281,7 +282,7 @@ wait_for_setup_completion() {
 		case "$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')" in
 			y|yes)
 				if [ "${panel_http_ok}" -ne 1 ]; then
-					log "Control panel is not reachable on localhost:3000 yet."
+					log "Control panel is not reachable on localhost:${ADMIN_PANEL_PORT} yet."
 					continue
 				fi
 
@@ -376,7 +377,7 @@ final_validation() {
 	state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 	[ "${state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-	curl -fsS -o /dev/null "http://127.0.0.1:3000" || fail "Control panel is not reachable on localhost:3000"
+	curl -fsS -o /dev/null "http://127.0.0.1:${ADMIN_PANEL_PORT}" || fail "Control panel is not reachable on localhost:${ADMIN_PANEL_PORT}"
 	is_port_listening_tcp 53 || fail "Port 53/tcp is not listening"
 	is_port_listening_udp 53 || fail "Port 53/udp is not listening"
 
@@ -442,6 +443,6 @@ final_validation
 
 echo
 log "Deployment complete and configuration checks passed"
-log "Control panel: http://localhost:3000"
+log "Control panel: http://localhost:${ADMIN_PANEL_PORT}"
 log "Container status: sudo docker ps --filter name=${SERVICE_NAME}"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
