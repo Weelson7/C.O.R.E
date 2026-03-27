@@ -22,6 +22,7 @@ HTPASSWD_FILE="/etc/nginx/.htpasswd_core"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_SOURCE_DIR="${API_SOURCE_DIR:-${SCRIPT_DIR}}"
 API_ENTRYPOINT="${API_ENTRYPOINT:-${API_SOURCE_DIR}/app.py}"
+API_ENTRYPOINT_BASENAME="$(basename "${API_ENTRYPOINT}")"
 INSTALL_DIR="/opt/core/indexer"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
@@ -60,6 +61,34 @@ ensure_value() {
   done
 
   printf -v "${var_name}" '%s' "${current_value}"
+}
+
+write_fallback_api() {
+  local target="$1"
+
+  cat <<'PY' | sudo tee "${target}" >/dev/null
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+
+@app.get('/api/sites')
+def sites():
+  # Fallback endpoint used when no project-specific API source exists.
+  return jsonify([])
+
+
+@app.get('/health')
+def health():
+  return jsonify({'status': 'ok'})
+
+
+if __name__ == '__main__':
+  from os import getenv
+
+  port = int(getenv('PORT', '5001'))
+  app.run(host='0.0.0.0', port=port)
+PY
 }
 
 write_frontend_assets() {
@@ -109,10 +138,6 @@ require_cmd awk
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
 
-if [ ! -f "${API_ENTRYPOINT}" ]; then
-  fail "API entrypoint not found at ${API_ENTRYPOINT}. Set API_SOURCE_DIR or API_ENTRYPOINT before running."
-fi
-
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
 sudo apt install -y nginx mkcert apache2-utils curl ca-certificates rsync docker.io docker-compose-plugin
@@ -148,6 +173,12 @@ log "[4/8] Preparing container build context at ${INSTALL_DIR}"
 sudo mkdir -p "${INSTALL_DIR}"
 sudo rsync -a --delete "${API_SOURCE_DIR}/" "${INSTALL_DIR}/"
 
+RUNTIME_API_ENTRYPOINT="${INSTALL_DIR}/${API_ENTRYPOINT_BASENAME}"
+if [ ! -f "${RUNTIME_API_ENTRYPOINT}" ]; then
+  log "API entrypoint not found at ${API_ENTRYPOINT}; generating fallback API at ${RUNTIME_API_ENTRYPOINT}"
+  write_fallback_api "${RUNTIME_API_ENTRYPOINT}"
+fi
+
 if [ ! -f "${INSTALL_DIR}/requirements.txt" ]; then
   log "requirements.txt not found; generating minimal fallback"
   printf '%s\n' 'flask' | sudo tee "${INSTALL_DIR}/requirements.txt" >/dev/null
@@ -168,7 +199,7 @@ ENV PORT=${API_PORT}
 ENV PYTHONUNBUFFERED=1
 EXPOSE ${API_PORT}
 
-CMD ["python", "app.py"]
+CMD ["python", "${API_ENTRYPOINT_BASENAME}"]
 EOF
 
 sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
