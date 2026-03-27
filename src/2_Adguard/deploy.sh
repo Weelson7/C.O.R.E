@@ -170,19 +170,19 @@ EOF
 write_compose_file() {
 	sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
-	adguard:
-		container_name: ${SERVICE_NAME}
-		image: ${IMAGE_TAG}
-		restart: unless-stopped
-		ports:
-			- "53:53/tcp"
-			- "53:53/udp"
-			- "80:80/tcp"
-			- "3000:3000/tcp"
-			- "443:443/tcp"
-		volumes:
-			- ${WORK_DIR}:/opt/adguardhome/work
-			- ${CONF_DIR}:/opt/adguardhome/conf
+  adguard:
+    container_name: ${SERVICE_NAME}
+    image: ${IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "80:80/tcp"
+      - "3000:3000/tcp"
+      - "443:443/tcp"
+    volumes:
+      - ${WORK_DIR}:/opt/adguardhome/work
+      - ${CONF_DIR}:/opt/adguardhome/conf
 EOF
 }
 
