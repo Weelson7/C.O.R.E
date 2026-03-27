@@ -24,6 +24,7 @@ COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 ADGUARD_VERSION="${ADGUARD_VERSION:-v0.107.59}"
 ADGUARD_RELEASE_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ADGUARD_VERSION}/AdGuardHome_linux_amd64.tar.gz"
 ADMIN_PANEL_PORT="${ADMIN_PANEL_PORT:-8080}"
+ADGUARD_ADMIN_CONTAINER_PORT="${ADGUARD_ADMIN_CONTAINER_PORT:-3000}"
 PUBLISH_HTTPS_PORT="${PUBLISH_HTTPS_PORT:-false}"
 ADGUARD_HTTPS_PORT="${ADGUARD_HTTPS_PORT:-443}"
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
@@ -277,7 +278,7 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-      - "${ADMIN_PANEL_PORT}:3000/tcp"
+			- "${ADMIN_PANEL_PORT}:${ADGUARD_ADMIN_CONTAINER_PORT}/tcp"
 EOF
 		if [ "${PUBLISH_HTTPS_PORT}" = "true" ]; then
 			echo "      - \"${ADGUARD_HTTPS_PORT}:443/tcp\""
@@ -288,6 +289,28 @@ EOF
       - ${CONF_DIR}:/opt/adguardhome/conf
 EOF
 	} | sudo tee "${COMPOSE_FILE}" >/dev/null
+}
+
+sync_admin_panel_mapping_from_config() {
+	local config_file="${CONF_DIR}/AdGuardHome.yaml"
+	local configured_port=""
+
+	[ -f "${config_file}" ] || return 0
+
+	configured_port="$(awk '/^[[:space:]]*bind_port:[[:space:]]*[0-9]+[[:space:]]*$/ {print $2; exit}' "${config_file}" 2>/dev/null || true)"
+	if ! printf '%s' "${configured_port}" | grep -Eq '^[0-9]+$'; then
+		return 0
+	fi
+
+	if [ "${configured_port}" = "${ADGUARD_ADMIN_CONTAINER_PORT}" ]; then
+		return 0
+	fi
+
+	log "Detected AdGuard bind_port=${configured_port}; remapping host ${ADMIN_PANEL_PORT} to container ${configured_port}"
+	ADGUARD_ADMIN_CONTAINER_PORT="${configured_port}"
+	write_compose_file
+	"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
+	sleep 2
 }
 
 start_single() {
@@ -322,6 +345,13 @@ wait_for_setup_completion() {
 		read -r -p "Have you completed setup and saved settings? [y/N]: " answer
 		case "$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')" in
 			y|yes)
+				if [ "${panel_http_ok}" -ne 1 ]; then
+					sync_admin_panel_mapping_from_config
+					if curl -fsS -o /dev/null "http://127.0.0.1:${ADMIN_PANEL_PORT}"; then
+						panel_http_ok=1
+					fi
+				fi
+
 				if [ "${panel_http_ok}" -ne 1 ]; then
 					log "Control panel is not reachable on localhost:${ADMIN_PANEL_PORT} yet."
 					continue
@@ -476,6 +506,7 @@ apply_rewrites_via_api
 validate_rewrites
 
 log "[9/9] Running final validation"
+sync_admin_panel_mapping_from_config
 final_validation
 
 echo
