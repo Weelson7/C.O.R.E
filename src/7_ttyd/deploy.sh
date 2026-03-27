@@ -134,6 +134,29 @@ wait_for_local_ttyd_health() {
   return 1
 }
 
+assert_ttyd_runtime_is_writable() {
+  local main_pid
+  local cmdline
+
+  main_pid="$(sudo systemctl show -p MainPID --value "${SERVICE_NAME}" 2>/dev/null || true)"
+  if ! printf '%s' "${main_pid}" | grep -Eq '^[0-9]+$' || [ "${main_pid}" -le 1 ]; then
+    fail "Could not determine active ttyd process PID for ${SERVICE_NAME}"
+  fi
+
+  cmdline="$(sudo tr '\0' ' ' < "/proc/${main_pid}/cmdline" 2>/dev/null || true)"
+  [ -n "${cmdline}" ] || fail "Could not read ttyd process command line for PID ${main_pid}"
+
+  if ! printf '%s' "${cmdline}" | grep -Eq '(^|[[:space:]])(--writable|-W)([[:space:]]|$)'; then
+    log "Active ttyd command line: ${cmdline}"
+    fail "ttyd is running without --writable"
+  fi
+
+  if printf '%s' "${cmdline}" | grep -Eq '(^|[[:space:]])(--readonly|-R)([[:space:]]|$)'; then
+    log "Active ttyd command line: ${cmdline}"
+    fail "ttyd is running with --readonly"
+  fi
+}
+
 validate_resolved_ip() {
   local resolved_ip="$1"
 
@@ -289,11 +312,14 @@ normalize_ttyd_extra_args
 write_env_file
 write_systemd_unit
 sudo systemctl daemon-reload
-sudo systemctl enable --now "${SERVICE_NAME}"
+sudo systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+sudo systemctl restart "${SERVICE_NAME}"
 
 log "[5/8] Verifying local ttyd health"
 service_state="$(sudo systemctl is-active "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${service_state}" = "active" ] || fail "Service ${SERVICE_NAME} is not active"
+
+assert_ttyd_runtime_is_writable
 
 if ! wait_for_local_ttyd_health 45 1; then
   log "ttyd local health check did not pass in time; dumping diagnostics"
