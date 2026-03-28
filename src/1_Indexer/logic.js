@@ -211,7 +211,7 @@ function classifyState(site) {
     return 'healthy';
   }
 
-  return 'healthy';
+  return 'unknown';
 }
 
 function stateClass(state) {

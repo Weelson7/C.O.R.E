@@ -156,6 +156,19 @@
     }
   },
   {
+    "id": "12_Seafile",
+    "name": "Seafile",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/seafile",
+    "domain": "seafile.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
     "id": "x_Supervisor",
     "name": "Supervisor",
     "status": "healthy",

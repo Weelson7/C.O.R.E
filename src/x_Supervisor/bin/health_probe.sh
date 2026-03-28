@@ -16,14 +16,81 @@ port="$3"
 TIMEOUT=5
 MAX_RETRIES=3
 
-probe_http() {
+expected_health_marker() {
+  case "$service_id" in
+    1_Indexer)
+      printf '"service":"indexer"'
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+looks_like_adguard_response() {
+  local headers_file="$1"
+  local body_file="$2"
+
+  if [ "$service_id" = "2_Adguard" ]; then
+    return 1
+  fi
+
+  if grep -qi 'adguard[[:space:]]*home' "$body_file"; then
+    return 0
+  fi
+
+  if grep -qi '^location:[[:space:]].*/login\.html' "$headers_file"; then
+    return 0
+  fi
+
+  if grep -qi '^server:[[:space:]]*AdGuardHome' "$headers_file"; then
+    return 0
+  fi
+
+  return 1
+}
+
+response_matches_service() {
+  local headers_file="$1"
+  local body_file="$2"
+  local expected
+
+  if looks_like_adguard_response "$headers_file" "$body_file"; then
+    return 1
+  fi
+
+  expected="$(expected_health_marker)"
+  if [ -n "$expected" ] && ! grep -Fq "$expected" "$body_file"; then
+    return 1
+  fi
+
+  return 0
+}
+
+probe_scheme() {
+  local scheme="$1"
   local target="$domain:$port"
   local attempt=1
+  local insecure=()
+
+  if [ "$scheme" = "https" ]; then
+    insecure=(-k)
+  fi
 
   while [ $attempt -le $MAX_RETRIES ]; do
-    if curl -fsS --connect-timeout "$TIMEOUT" "http://${target}/health" >/dev/null 2>&1; then
-      return 0
+    local headers_file body_file
+    headers_file="$(mktemp)"
+    body_file="$(mktemp)"
+
+    if curl -fsS --connect-timeout "$TIMEOUT" --max-time "$((TIMEOUT + 2))" \
+      -D "$headers_file" -o "$body_file" "${insecure[@]}" "${scheme}://${target}/health" >/dev/null 2>&1; then
+      if response_matches_service "$headers_file" "$body_file"; then
+        rm -f "$headers_file" "$body_file"
+        return 0
+      fi
     fi
+
+    rm -f "$headers_file" "$body_file"
     attempt=$((attempt + 1))
     sleep 1
   done
@@ -31,19 +98,12 @@ probe_http() {
   return 1
 }
 
+probe_http() {
+  probe_scheme "http"
+}
+
 probe_https() {
-  local target="$domain:$port"
-  local attempt=1
-
-  while [ $attempt -le $MAX_RETRIES ]; do
-    if curl -fsS --connect-timeout "$TIMEOUT" -k "https://${target}/health" >/dev/null 2>&1; then
-      return 0
-    fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-
-  return 1
+  probe_scheme "https"
 }
 
 probe_docker() {
