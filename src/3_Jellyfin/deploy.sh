@@ -205,25 +205,38 @@ server {
 
     client_max_body_size 20G;
 
+    # Set upstream variable
+    set \$jellyfin 127.0.0.1;
+
+    add_header X-Content-Type-Options "nosniff" always;
+
     location / {
-        proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
-        proxy_http_version 1.1;
+        # Proxy main Jellyfin traffic
+        proxy_pass         http://\$jellyfin:${PUBLISHED_HTTP_PORT};
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;
         proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Protocol \$scheme;
         proxy_set_header   X-Forwarded-Host \$http_host;
         
-        proxy_set_header   Upgrade \$http_upgrade;
-        proxy_set_header   Connection "upgrade";
-        
+        # Disable buffering when the nginx proxy gets very resource heavy upon streaming
         proxy_buffering off;
-        proxy_read_timeout 3600;
     }
 
-    add_header X-Frame-Options        "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff"    always;
-    add_header Referrer-Policy        "same-origin" always;
+    location /socket {
+        # Proxy Jellyfin Websockets traffic
+        proxy_pass         http://\$jellyfin:${PUBLISHED_HTTP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Protocol \$scheme;
+        proxy_set_header   X-Forwarded-Host \$http_host;
+    }
 
     access_log /var/log/nginx/core-jellyfin.access.log;
     error_log  /var/log/nginx/core-jellyfin.error.log warn;
@@ -310,10 +323,11 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" | awk '{print $1}' | head -n1)"
 [ -n "${resolved_ip}" ] || fail "DNS resolution failed for ${DOMAIN}"
 validate_resolved_ip "${resolved_ip}"
 
+log "Testing ingress at https://${DOMAIN}/"
 curl --silent --show-error --fail --insecure -w "\nHTTP %{http_code}\n" \
   --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
   --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
-  "https://${DOMAIN}/" >/dev/null || fail "Ingress health check failed on https://${DOMAIN}/"
+  "https://${DOMAIN}/" || fail "Ingress health check failed on https://${DOMAIN}/"
 
 echo
 log "Deployment complete"
