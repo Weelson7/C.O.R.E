@@ -169,6 +169,19 @@
     }
   },
   {
+    "id": "13_ncdu-web-viewer",
+    "name": "ncdu-web-viewer",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/ncdu-web-viewer",
+    "domain": "ncdu.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
     "id": "x_Supervisor",
     "name": "Supervisor",
     "status": "healthy",

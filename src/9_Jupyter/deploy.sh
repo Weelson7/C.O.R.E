@@ -281,19 +281,19 @@ if [ -f "${COMPOSE_FILE}" ]; then
 fi
 sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
 
-log "[3/8] Building custom Jupyter image with Java and C++ kernels"
+log "[3/9] Building custom Jupyter image with Java and C++ kernels"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sudo cp -f "${SCRIPT_DIR}/Dockerfile" "${DOCKERFILE}"
-sudo docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${INSTALL_DIR}" || fail "Docker build failed"
+sudo docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${SCRIPT_DIR}" || fail "Docker build failed"
 
-log "[4/8] Enforcing no-port-conflict policy"
+log "[4/9] Enforcing no-port-conflict policy"
 # Single localhost binding keeps all Jupyter kernel ports internal to the container.
 assert_host_port_available "${PUBLISHED_HTTP_PORT}"
 
-log "[5/8] Writing container runtime definition"
+log "[5/9] Writing container runtime definition"
 write_compose_file
 
-log "[6/8] Starting Jupyter container"
+log "[6/9] Starting Jupyter container"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
@@ -301,7 +301,7 @@ container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 
 
 wait_for_local_health 40 2 || fail "Jupyter local health check failed on http://127.0.0.1:${PUBLISHED_HTTP_PORT}/api"
 
-log "[7/8] Provisioning TLS material for ${DOMAIN}"
+log "[7/9] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-jupyter-cert.XXXXXX.pem)"
@@ -314,7 +314,7 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[8/8] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[8/9] Writing and validating Nginx ingress for ${DOMAIN}"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
   printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 else
@@ -331,7 +331,7 @@ sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-log "[8/8] Validating mesh DNS and ingress runtime"
+log "[9/9] Validating mesh DNS and ingress runtime"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
