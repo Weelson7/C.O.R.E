@@ -170,16 +170,37 @@ services:
     image: ${IMAGE_TAG}
     restart: unless-stopped
     environment:
-      TZ: "${TZ:-UTC}"
-      BIND_IP: "${BIND_IP:-0.0.0.0}"
-      BIND_PORT: "${BIND_PORT:-4567}"
-      WEB_UI_ENABLED: "${WEB_UI_ENABLED:-true}"
+      TZ: UTC
     volumes:
       - ${DATA_DIR}:/home/suwayomi/.local/share/Tachidesk
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
+      - ${EXTENSIONS_DIR}:/home/suwayomi/.local/share/Tachidesk/extensions
     ports:
       - 0.0.0.0:${PUBLISHED_HTTP_PORT}:4567
 EOF
+}
+
+write_server_conf() {
+  sudo mkdir -p "${DATA_DIR}"
+  sudo tee "${DATA_DIR}/server.conf" >/dev/null <<EOF
+server {
+  port = 4567
+  socketTimeout = 60000
+  downloadAsCbz = false
+  ehentaiCookieDownload = false
+
+  webUI {
+    enabled = true
+    initialOpenInBrowserEnabled = false
+  }
+
+  proxy {
+    enabled = false
+  }
+}
+EOF
+  sudo chown 1000:1000 "${DATA_DIR}/server.conf"
+  sudo chmod 644 "${DATA_DIR}/server.conf"
 }
 
 write_nginx_site() {
@@ -293,6 +314,7 @@ sudo chown -R 1000:1000 "${DATA_DIR}" "${DOWNLOADS_DIR}"
 
 log "[3/9] Writing container runtime definition"
 write_compose_file
+write_server_conf
 
 log "[4/9] Stopping and removing any existing Suwayomi container"
 sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
