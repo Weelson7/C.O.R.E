@@ -179,7 +179,8 @@ services:
       - ${CACHE_DIR}:/cache
       - ${MEDIA_DIR}:/media:ro
     ports:
-      - "${PUBLISHED_HTTP_PORT}:8096"
+      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:8096"
+    network_mode: bridge
 EOF
 }
 
@@ -205,38 +206,23 @@ server {
 
     client_max_body_size 20G;
 
-    # Set upstream variable
-    set \$jellyfin 127.0.0.1;
-
-    add_header X-Content-Type-Options "nosniff" always;
-
     location / {
-        # Proxy main Jellyfin traffic
-        proxy_pass         http://\$jellyfin:${PUBLISHED_HTTP_PORT};
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Protocol \$scheme;
-        proxy_set_header   X-Forwarded-Host \$http_host;
-        
-        # Disable buffering when the nginx proxy gets very resource heavy upon streaming
-        proxy_buffering off;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_buffering    off;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
     }
 
-    location /socket {
-        # Proxy Jellyfin Websockets traffic
-        proxy_pass         http://\$jellyfin:${PUBLISHED_HTTP_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade \$http_upgrade;
-        proxy_set_header   Connection "upgrade";
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Protocol \$scheme;
-        proxy_set_header   X-Forwarded-Host \$http_host;
-    }
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy        "same-origin" always;
 
     access_log /var/log/nginx/core-jellyfin.access.log;
     error_log  /var/log/nginx/core-jellyfin.error.log warn;
@@ -269,10 +255,10 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/7] Provisioning runtime directories"
+log "[2/8] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}"
 
-log "[3/7] Writing container runtime definition"
+log "[3/8] Writing container runtime definition"
 write_compose_file
 
 log "[4/8] Starting Jellyfin container"
@@ -296,7 +282,7 @@ if ! wait_for_local_jellyfin_health 45 1; then
   fail "Jellyfin local health check failed"
 fi
 
-log "[5/8] Provisioning TLS material for ${DOMAIN}"
+log "[6/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-jellyfin-cert.XXXXXX.pem)"
@@ -309,20 +295,16 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[6/8] Enforcing centralized ingress authentication"
+log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
   sudo htpasswd -cb "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
 else
   sudo htpasswd -b "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
 fi
-sudo chmod 640 "${HTPASSWD_FILE}"
 
-log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
 write_nginx_site
-
 sudo ln -sfn "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
 sudo nginx -t
-sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 log "[8/8] Verifying mesh DNS and ingress runtime health"
