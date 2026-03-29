@@ -170,15 +170,15 @@ services:
     image: ${IMAGE_TAG}
     restart: unless-stopped
     environment:
-      TZ= "${TZ:-UTC}"
-      BIND_IP= "0.0.0.0"
-      BIND_PORT= "4567"
-      WEB_UI_ENABLED= "true"
+      TZ: ${TZ:-UTC}
+      BIND_IP: ${BIND_IP:-0.0.0.0}
+      BIND_PORT: ${BIND_PORT:-4567}
+      WEB_UI_ENABLED: ${WEB_UI_ENABLED:-true}
     volumes:
       - ${DATA_DIR}:/home/suwayomi/.local/share/Tachidesk
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
     ports:
-      - "0.0.0.0:${PUBLISHED_HTTP_PORT}:4567"
+      - 0.0.0.0:${PUBLISHED_HTTP_PORT}:4567
 EOF
 }
 
