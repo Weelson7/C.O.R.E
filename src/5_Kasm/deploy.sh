@@ -144,7 +144,21 @@ require_cmd awk
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 
-log "[1/6] Installing dependencies"
+log "[1/7] Cleaning up any previous Kasm installation"
+# Stop Kasm if it's running
+if [ -f /opt/kasm/bin/stop ]; then
+  log "Stopping existing Kasm services..."
+  sudo /opt/kasm/bin/stop || true
+fi
+
+# Remove all Kasm containers
+log "Removing old Kasm containers..."
+sudo docker ps -a --format '{{.Names}}' | grep -i kasm | xargs -r sudo docker rm -f 2>/dev/null || true
+
+# Wait a moment for ports to be freed
+sleep 3
+
+log "[2/7] Installing dependencies"
 sudo apt update -y
 sudo apt install -y nginx mkcert curl ca-certificates
 
@@ -152,10 +166,10 @@ require_cmd mkcert
 require_cmd nginx
 require_cmd curl
 
-log "[2/6] Setting up swap space (Kasm requires sufficient memory)"
+log "[3/7] Setting up swap space (Kasm requires sufficient memory)"
 setup_swap
 
-log "[3/6] Downloading and installing Kasm Workspaces ${KASM_VERSION}"
+log "[4/7] Downloading and installing Kasm Workspaces ${KASM_VERSION}"
 cd /tmp
 KASM_TAR="kasm_release_${KASM_VERSION}.${KASM_BUILD}.tar.gz"
 KASM_URL="https://kasm-static-content.s3.amazonaws.com/${KASM_TAR}"
@@ -202,7 +216,7 @@ if ! curl -k -s --max-time 10 "https://127.0.0.1:${KASM_PORT}" >/dev/null 2>&1; 
   log "This may be normal if Kasm is still initializing. Continuing..."
 fi
 
-log "[4/6] Provisioning TLS material for ${DOMAIN}"
+log "[5/7] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/kasm-cert.XXXXXX.pem)"
@@ -215,7 +229,7 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[5/6] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[6/7] Writing and validating Nginx ingress for ${DOMAIN}"
 write_nginx_site
 
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
@@ -225,7 +239,7 @@ sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-log "[6/6] Validating mesh DNS and ingress runtime"
+log "[7/7] Validating mesh DNS and ingress runtime"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
