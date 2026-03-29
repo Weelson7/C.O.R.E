@@ -181,8 +181,25 @@ sleep 30
 
 # Check if Kasm is running
 if ! sudo docker ps | grep -q kasm; then
+  log "ERROR: Kasm containers are not running. Listing all containers:"
   sudo docker ps -a
-  fail "Kasm containers are not running. Check logs above."
+  fail "Kasm containers failed to start. Check installation log in /tmp/kasm_install_*.log"
+fi
+
+# Check if port is listening
+log "Checking if Kasm is listening on port ${KASM_PORT}..."
+if ! sudo ss -lntp | grep -q ":${KASM_PORT}"; then
+  log "ERROR: Port ${KASM_PORT} is not listening. Checking what ports Kasm is using:"
+  sudo docker ps --format "table {{.Names}}\t{{.Ports}}" | grep kasm
+  sudo ss -lntp | grep -E ":(443|8443|3000)" || true
+  fail "Kasm is not listening on expected port ${KASM_PORT}"
+fi
+
+# Test direct access to Kasm
+log "Testing direct access to Kasm at https://127.0.0.1:${KASM_PORT}"
+if ! curl -k -s --max-time 10 "https://127.0.0.1:${KASM_PORT}" >/dev/null 2>&1; then
+  log "WARNING: Could not reach Kasm directly at https://127.0.0.1:${KASM_PORT}"
+  log "This may be normal if Kasm is still initializing. Continuing..."
 fi
 
 log "[4/6] Provisioning TLS material for ${DOMAIN}"
@@ -244,6 +261,12 @@ log "Look for 'admin_password' and 'user_password'"
 log ""
 log "To view credentials:"
 log "  sudo grep -A1 'admin_password\\|user_password' /opt/kasm/current/conf/app/api.app.config.yaml"
+log ""
+log "If you get 502 errors, check:"
+log "  1. Container status: sudo docker ps | grep kasm"
+log "  2. Port listening: sudo ss -lntp | grep ${KASM_PORT}"
+log "  3. Direct access: curl -k https://127.0.0.1:${KASM_PORT}"
+log "  4. Nginx errors: sudo tail -50 /var/log/nginx/kasm.error.log"
 log ""
 log "Manage services:"
 log "  sudo /opt/kasm/bin/stop"
