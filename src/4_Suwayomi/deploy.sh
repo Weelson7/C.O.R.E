@@ -28,12 +28,9 @@ NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
 NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
 NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
-HTPASSWD_FILE="/etc/nginx/.htpasswd_core_suwayomi"
-HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
-HTPASSWD_USER="${HTPASSWD_USER:-}"
 COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
@@ -176,7 +173,8 @@ services:
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
       - ${EXTENSIONS_DIR}:/home/suwayomi/.local/share/Tachidesk/extensions
     ports:
-      - 0.0.0.0:${PUBLISHED_HTTP_PORT}:4567
+      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:4567"
+    network_mode: bridge
 EOF
 }
 
@@ -220,9 +218,6 @@ server {
     ssl_certificate     ${NGINX_CERT_FILE};
     ssl_certificate_key ${NGINX_KEY_FILE};
 
-    auth_basic           "C.O.R.E. - restricted";
-    auth_basic_user_file ${HTPASSWD_FILE};
-
     location / {
         proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
         proxy_http_version 1.1;
@@ -232,11 +227,13 @@ server {
         proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_set_header   Upgrade           \$http_upgrade;
         proxy_set_header   Connection        "upgrade";
+        proxy_buffering    off;
         proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff"    always;
+    add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy        "same-origin" always;
 
     access_log /var/log/nginx/core-suwayomi.access.log;
@@ -289,19 +286,16 @@ require_cmd awk
 require_cmd grep
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
-ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
-ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
 log "[1/9] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates
+sudo apt install -y nginx mkcert curl ca-certificates
 install_container_stack
 
 require_cmd mkcert
 require_cmd nginx
 require_cmd docker
 require_cmd curl
-require_cmd htpasswd
 resolve_compose_cmd
 
 sudo systemctl enable docker
@@ -355,13 +349,6 @@ sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
 log "[8/9] Writing and validating Nginx ingress for ${DOMAIN}"
-if [ ! -f "${HTPASSWD_FILE}" ]; then
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-else
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-fi
-sudo chmod 640 "${HTPASSWD_FILE}"
-
 write_nginx_site
 
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
@@ -379,8 +366,22 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/" >/dev/null \
-  || fail "Ingress health check failed for https://${DOMAIN}/"
+log "Testing ingress at https://${DOMAIN}/"
+ingress_response="$(curl --silent --show-error --insecure -w "\nHTTP_CODE:%{http_code}" \
+  --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
+  "https://${DOMAIN}/" 2>&1)" || true
+
+echo "${ingress_response}"
+
+http_code="$(echo "${ingress_response}" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)"
+case "${http_code}" in
+  200|301|302|401|403)
+    log "Ingress check passed with HTTP ${http_code}"
+    ;;
+  *)
+    fail "Ingress health check failed on https://${DOMAIN}/ (HTTP ${http_code})"
+    ;;
+esac
 
 echo
 log "Deployment complete and container runtime checks passed"
