@@ -152,12 +152,15 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - JELLYFIN_PublishedServerUrl=https://${DOMAIN}
+      - JELLYFIN_PublishedHttpPort=80
+      - JELLYFIN_PublishedHttpsPort=443
     volumes:
       - ${CONFIG_DIR}:/config
       - ${CACHE_DIR}:/cache
       - ${MEDIA_DIR}:/media:ro
     ports:
       - "127.0.0.1:${PUBLISHED_HTTP_PORT}:8096"
+    network_mode: bridge
 EOF
 }
 
@@ -298,8 +301,20 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/web/index.html" >/dev/null \
-  || fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
+log "Testing ingress connection to https://${DOMAIN}/web/index.html"
+log "Jellyfin container status: $(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || echo 'unknown')"
+log "Jellyfin container logs (last 5 lines):"
+sudo docker logs --tail 5 "${SERVICE_NAME}" 2>/dev/null | sed 's/^/  /'
+
+if ! curl --silent --show-error --insecure "https://${DOMAIN}/web/index.html" >/dev/null 2>&1; then
+  log "ERROR: Ingress health check failed"
+  log "Debugging info:"
+  log "  Local health: $(curl --silent --show-error --insecure "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1 && echo 'OK' || echo 'FAILED')"
+  log "  Nginx status: $(sudo systemctl is-active nginx)"
+  log "  Nginx error log (last 5 lines):"
+  sudo tail -5 /var/log/nginx/core-jellyfin.error.log 2>/dev/null | sed 's/^/    /' || echo "    (no errors logged)"
+  fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
+fi
 
 echo
 log "Deployment complete and container runtime checks passed"
