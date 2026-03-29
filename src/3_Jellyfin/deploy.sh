@@ -242,8 +242,22 @@ log "[4/7] Starting Jellyfin container"
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null \
-  || fail "Jellyfin local health check failed"
+log "Waiting for Jellyfin to become healthy..."
+local max_attempts=30
+local attempt=0
+while [ "${attempt}" -lt "${max_attempts}" ]; do
+  if curl --silent --show-error --fail --max-time 5 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
+    log "Jellyfin is healthy"
+    break
+  fi
+  attempt=$((attempt + 1))
+  if [ "${attempt}" -lt "${max_attempts}" ]; then
+    log "Health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
+    sleep 1
+  fi
+done
+
+[ "${attempt}" -lt "${max_attempts}" ] || fail "Jellyfin local health check failed after ${max_attempts} attempts"
 
 log "[5/7] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
