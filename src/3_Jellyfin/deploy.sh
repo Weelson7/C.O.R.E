@@ -21,7 +21,7 @@ MEDIA_DIR="${MEDIA_DIR:-/srv/media}"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-jellyfin/jellyfin:latest}"
-PUBLISHED_HTTP_PORT="8096"
+PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-8096}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
 NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
@@ -152,19 +152,12 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - JELLYFIN_PublishedServerUrl=https://${DOMAIN}
-      - JELLYFIN_PublishedHttpPort=80
-      - JELLYFIN_PublishedHttpsPort=443
     volumes:
       - ${CONFIG_DIR}:/config
       - ${CACHE_DIR}:/cache
       - ${MEDIA_DIR}:/media:ro
     ports:
-      - "0.0.0.0:${PUBLISHED_HTTP_PORT}:8096"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - "${PUBLISHED_HTTP_PORT}:8096"
 EOF
 }
 
@@ -173,7 +166,6 @@ write_nginx_site() {
 server {
     listen 80;
     listen [::]:80;
-    listen ${NETBIRD_DEVICE_IP}:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
 }
@@ -181,7 +173,6 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    listen ${NETBIRD_DEVICE_IP}:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     ${NGINX_CERT_FILE};
@@ -199,16 +190,9 @@ server {
         proxy_set_header   X-Real-IP         \$remote_addr;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Host  \$host;
-        proxy_set_header   X-Forwarded-Port  \$server_port;
-        
-        proxy_buffering          off;
-        proxy_cache              off;
-        proxy_redirect           off;
-        
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        "upgrade";
         proxy_read_timeout 3600;
-        proxy_send_timeout 3600;
-        proxy_connect_timeout 600;
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
@@ -255,63 +239,25 @@ write_compose_file
 log "[4/7] Starting Jellyfin container"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
-sleep 2
-
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
-if [ "${container_state}" != "running" ]; then
-  log "ERROR: Container state is '${container_state}', not running"
-  log "Container inspect output:"
-  sudo docker inspect "${SERVICE_NAME}" 2>&1 | head -30
-  log "Recent container logs:"
-  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -50
-  fail "Container ${SERVICE_NAME} failed to start"
-fi
+[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-log "Waiting for Jellyfin HTTP port to be accessible..."
+log "Waiting for Jellyfin to become healthy..."
 max_attempts=30
 attempt=0
 while [ "${attempt}" -lt "${max_attempts}" ]; do
-  if timeout 3 bash -c "</dev/tcp/127.0.0.1/${PUBLISHED_HTTP_PORT}" 2>/dev/null; then
-    log "Port ${PUBLISHED_HTTP_PORT} is listening"
+  if curl --silent --show-error --fail --max-time 5 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
+    log "Jellyfin is healthy"
     break
   fi
   attempt=$((attempt + 1))
   if [ "${attempt}" -lt "${max_attempts}" ]; then
-    log "Port check attempt ${attempt}/${max_attempts} - port not listening yet; retrying in 1s..."
+    log "Health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
     sleep 1
   fi
 done
 
-if [ "${attempt}" -ge "${max_attempts}" ]; then
-  log "ERROR: Jellyfin port ${PUBLISHED_HTTP_PORT} never became accessible"
-  log "Container status: $(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}")"
-  log "Container logs (last 100 lines):"
-  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -100
-  fail "Port ${PUBLISHED_HTTP_PORT} did not open; check container logs above"
-fi
-
-log "Waiting for Jellyfin HTTP health endpoint..."
-attempt=0
-while [ "${attempt}" -lt "${max_attempts}" ]; do
-  if curl --silent --show-error --fail --max-time 3 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
-    log "Jellyfin HTTP endpoint is healthy"
-    break
-  fi
-  attempt=$((attempt + 1))
-  if [ "${attempt}" -lt "${max_attempts}" ]; then
-    log "HTTP health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
-    sleep 1
-  fi
-done
-
-if [ "${attempt}" -ge "${max_attempts}" ]; then
-  log "ERROR: Jellyfin HTTP endpoint never responded"
-  log "Recent curl output:"
-  curl -v "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" 2>&1 || true
-  log "Container logs (last 100 lines):"
-  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -100
-  fail "Jellyfin HTTP health check failed"
-fi
+[ "${attempt}" -lt "${max_attempts}" ] || fail "Jellyfin local health check failed after ${max_attempts} attempts"
 
 log "[5/7] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
@@ -352,52 +298,8 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-log "Testing nginx accessibility on netbird IP (${NETBIRD_DEVICE_IP})..."
-log "  Checking if port 80 is open on ${NETBIRD_DEVICE_IP}:80"
-if timeout 3 bash -c "echo > /dev/tcp/${NETBIRD_DEVICE_IP}/80" 2>/dev/null; then
-  log "  Port 80: OPEN"
-else
-  log "  Port 80: CLOSED/UNREACHABLE (nginx may not be bound to netbird IP, or port filtered)"
-fi
-
-log "  Checking if port 443 is open on ${NETBIRD_DEVICE_IP}:443"
-if timeout 3 bash -c "echo > /dev/tcp/${NETBIRD_DEVICE_IP}/443" 2>/dev/null; then
-  log "  Port 443: OPEN"
-else
-  log "  Port 443: CLOSED/UNREACHABLE (nginx may not be bound to netbird IP, or port filtered)"
-fi
-
-log "Testing HTTP redirect from nginx on netbird IP..."
-if curl --silent --max-time 3 "http://${NETBIRD_DEVICE_IP}" 2>&1 | grep -q "301\|302\|Location"; then
-  log "  HTTP redirect: OK (nginx is responding)"
-else
-  log "  HTTP redirect: FAILED or no response"
-fi
-
-log "Testing HTTPS with auth on domain ${DOMAIN}..."
-if curl --silent --show-error --insecure "https://${DOMAIN}/web/index.html" >/dev/null 2>&1; then
-  log "  HTTPS to domain: OK"
-else
-  log "  HTTPS to domain: FAILED"
-  log "  Testing direct IP HTTPS (${NETBIRD_DEVICE_IP}:443/web/index.html)..."
-  if curl --silent --show-error --insecure "https://${NETBIRD_DEVICE_IP}/web/index.html" 2>&1 | head -5; then
-    log "  Direct IP: Got response (check above)"
-  else
-    log "  Direct IP: No response"
-  fi
-fi
-
-log "Nginx configuration and status:"
-log "  Listening sockets:"
-sudo ss -tlnp 2>/dev/null | grep -E ':(80|443) ' | sed 's/^/    /' || log "    (ss command failed)"
-
-log "  Nginx test output:"
-sudo nginx -t 2>&1 | sed 's/^/    /'
-
-log "  Nginx error log (last 10 lines):"
-sudo tail -10 /var/log/nginx/core-jellyfin.error.log 2>/dev/null | sed 's/^/    /' || log "    (no errors)"
-
-fail "Ingress health check failed for https://${DOMAIN}/web/index.html - check diagnostics above"
+curl --silent --show-error --fail --insecure "https://${DOMAIN}/web/index.html" >/dev/null \
+  || fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
 
 echo
 log "Deployment complete and container runtime checks passed"
