@@ -298,7 +298,7 @@ log "Container started. Kasm takes 2-4 minutes to initialize on first run..."
 wait_for_local_health 90 3 || {
   log "Health check failed. Container logs:"
   sudo docker logs "${SERVICE_NAME}" --tail 50
-  fail "Kasm local health check failed on ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
+  fail "Kasm local health check failed on https://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
 }
 
 log "[6/8] Provisioning TLS material for ${DOMAIN}"
