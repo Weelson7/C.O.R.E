@@ -276,6 +276,13 @@ log "[3/7] Writing container runtime definition"
 write_compose_file
 
 log "[4/8] Starting Jellyfin container"
+# Stop and remove existing container if it exists
+if sudo docker ps -a --format '{{.Names}}' | grep -q "^${SERVICE_NAME}$"; then
+  log "Stopping and removing existing container ${SERVICE_NAME}"
+  sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
+  sudo docker rm "${SERVICE_NAME}" 2>/dev/null || true
+fi
+
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
