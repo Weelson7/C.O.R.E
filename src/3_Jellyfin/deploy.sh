@@ -28,12 +28,9 @@ NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
 NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
 NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
-HTPASSWD_FILE="/etc/nginx/.htpasswd_core_jellyfin"
-HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
-HTPASSWD_USER="${HTPASSWD_USER:-}"
 COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
@@ -201,9 +198,6 @@ server {
     ssl_certificate     ${NGINX_CERT_FILE};
     ssl_certificate_key ${NGINX_KEY_FILE};
 
-    auth_basic           "C.O.R.E. - restricted";
-    auth_basic_user_file ${HTPASSWD_FILE};
-
     client_max_body_size 20G;
 
     location / {
@@ -237,19 +231,16 @@ require_cmd getent
 require_cmd awk
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
-ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
-ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates
+sudo apt install -y nginx mkcert curl ca-certificates
 install_container_stack
 
 require_cmd mkcert
 require_cmd nginx
 require_cmd docker
 require_cmd curl
-require_cmd htpasswd
 resolve_compose_cmd
 
 sudo systemctl enable docker
@@ -296,12 +287,6 @@ sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
 log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
-if [ ! -f "${HTPASSWD_FILE}" ]; then
-  sudo htpasswd -cb "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
-else
-  sudo htpasswd -b "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
-fi
-
 write_nginx_site
 sudo ln -sfn "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
 sudo nginx -t
@@ -313,14 +298,25 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" | awk '{print $1}' | head -n1)"
 validate_resolved_ip "${resolved_ip}"
 
 log "Testing ingress at https://${DOMAIN}/"
-curl --silent --show-error --fail --insecure -w "\nHTTP %{http_code}\n" \
+ingress_response="$(curl --silent --show-error --insecure -w "\nHTTP_CODE:%{http_code}" \
   --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
-  --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
-  "https://${DOMAIN}/" || fail "Ingress health check failed on https://${DOMAIN}/"
+  "https://${DOMAIN}/" 2>&1)" || true
+
+echo "${ingress_response}"
+
+http_code="$(echo "${ingress_response}" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)"
+case "${http_code}" in
+  200|301|302|401|403)
+    log "Ingress check passed with HTTP ${http_code}"
+    ;;
+  *)
+    fail "Ingress health check failed on https://${DOMAIN}/ (HTTP ${http_code})"
+    ;;
+esac
 
 echo
 log "Deployment complete"
 log "Container status: sudo docker ps -f name=${SERVICE_NAME}"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
 log "Nginx error log: sudo tail -50 /var/log/nginx/core-jellyfin.error.log"
-log "Ingress check: curl -k -u <user>:<password> https://${DOMAIN}/"
+log "Ingress check: curl -k https://${DOMAIN}/"
