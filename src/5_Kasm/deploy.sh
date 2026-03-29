@@ -199,7 +199,7 @@ services:
       - /dev/input:/dev/input
       - /run/udev/data:/run/udev/data
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTPS_PORT}:443"
+      - "127.0.0.1:${PUBLISHED_HTTPS_PORT}:3000"
     network_mode: bridge
 EOF
 }
@@ -273,23 +273,24 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/8] Provisioning runtime directories"
-sudo mkdir -p "${INSTALL_DIR}" "${INSTALL_DIR}/opt" "${INSTALL_DIR}/profiles"
-
+log "[2/8] Cleaning up previous deployment"
 if [ -f "${COMPOSE_FILE}" ]; then
-  log "Stopping existing stack before conflict checks"
   "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
 fi
-sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
+sudo docker rm -f "${SERVICE_NAME}" 2>/dev/null || true
 
-log "[3/8] Enforcing no-port-conflict policy"
+log "[3/8] Provisioning runtime directories"
+sudo mkdir -p "${INSTALL_DIR}" "${INSTALL_DIR}/opt" "${INSTALL_DIR}/profiles"
+
+log "[4/8] Enforcing no-port-conflict policy"
 assert_host_port_available "${PUBLISHED_HTTPS_PORT}"
 
-log "[4/8] Writing container runtime definition"
+log "[5/8] Writing container runtime definition"
 write_compose_file
 
-log "[5/8] Starting Kasm container"
-"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
+log "[6/8] Starting Kasm container"
+"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --pull always
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
@@ -301,7 +302,7 @@ wait_for_local_health 90 3 || {
   fail "Kasm local health check failed on https://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
 }
 
-log "[6/8] Provisioning TLS material for ${DOMAIN}"
+log "[7/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-kasm-cert.XXXXXX.pem)"
@@ -314,7 +315,7 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[8/9] Writing and validating Nginx ingress for ${DOMAIN}"
 write_nginx_site
 
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
@@ -324,7 +325,7 @@ sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-log "[8/8] Validating mesh DNS and ingress runtime"
+log "[9/9] Validating mesh DNS and ingress runtime"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
