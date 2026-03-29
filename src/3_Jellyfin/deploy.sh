@@ -173,6 +173,7 @@ write_nginx_site() {
 server {
     listen 80;
     listen [::]:80;
+    listen ${NETBIRD_DEVICE_IP}:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
 }
@@ -180,6 +181,7 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
+    listen ${NETBIRD_DEVICE_IP}:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     ${NGINX_CERT_FILE};
@@ -350,20 +352,52 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-log "Testing ingress connection to https://${DOMAIN}/web/index.html"
-log "Jellyfin container status: $(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || echo 'unknown')"
-log "Jellyfin container logs (last 5 lines):"
-sudo docker logs --tail 5 "${SERVICE_NAME}" 2>/dev/null | sed 's/^/  /'
-
-if ! curl --silent --show-error --insecure "https://${DOMAIN}/web/index.html" >/dev/null 2>&1; then
-  log "ERROR: Ingress health check failed"
-  log "Debugging info:"
-  log "  Local health: $(curl --silent --show-error --insecure "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1 && echo 'OK' || echo 'FAILED')"
-  log "  Nginx status: $(sudo systemctl is-active nginx)"
-  log "  Nginx error log (last 5 lines):"
-  sudo tail -5 /var/log/nginx/core-jellyfin.error.log 2>/dev/null | sed 's/^/    /' || echo "    (no errors logged)"
-  fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
+log "Testing nginx accessibility on netbird IP (${NETBIRD_DEVICE_IP})..."
+log "  Checking if port 80 is open on ${NETBIRD_DEVICE_IP}:80"
+if timeout 3 bash -c "echo > /dev/tcp/${NETBIRD_DEVICE_IP}/80" 2>/dev/null; then
+  log "  Port 80: OPEN"
+else
+  log "  Port 80: CLOSED/UNREACHABLE (nginx may not be bound to netbird IP, or port filtered)"
 fi
+
+log "  Checking if port 443 is open on ${NETBIRD_DEVICE_IP}:443"
+if timeout 3 bash -c "echo > /dev/tcp/${NETBIRD_DEVICE_IP}/443" 2>/dev/null; then
+  log "  Port 443: OPEN"
+else
+  log "  Port 443: CLOSED/UNREACHABLE (nginx may not be bound to netbird IP, or port filtered)"
+fi
+
+log "Testing HTTP redirect from nginx on netbird IP..."
+if curl --silent --max-time 3 "http://${NETBIRD_DEVICE_IP}" 2>&1 | grep -q "301\|302\|Location"; then
+  log "  HTTP redirect: OK (nginx is responding)"
+else
+  log "  HTTP redirect: FAILED or no response"
+fi
+
+log "Testing HTTPS with auth on domain ${DOMAIN}..."
+if curl --silent --show-error --insecure "https://${DOMAIN}/web/index.html" >/dev/null 2>&1; then
+  log "  HTTPS to domain: OK"
+else
+  log "  HTTPS to domain: FAILED"
+  log "  Testing direct IP HTTPS (${NETBIRD_DEVICE_IP}:443/web/index.html)..."
+  if curl --silent --show-error --insecure "https://${NETBIRD_DEVICE_IP}/web/index.html" 2>&1 | head -5; then
+    log "  Direct IP: Got response (check above)"
+  else
+    log "  Direct IP: No response"
+  fi
+fi
+
+log "Nginx configuration and status:"
+log "  Listening sockets:"
+sudo ss -tlnp 2>/dev/null | grep -E ':(80|443) ' | sed 's/^/    /' || log "    (ss command failed)"
+
+log "  Nginx test output:"
+sudo nginx -t 2>&1 | sed 's/^/    /'
+
+log "  Nginx error log (last 10 lines):"
+sudo tail -10 /var/log/nginx/core-jellyfin.error.log 2>/dev/null | sed 's/^/    /' || log "    (no errors)"
+
+fail "Ingress health check failed for https://${DOMAIN}/web/index.html - check diagnostics above"
 
 echo
 log "Deployment complete and container runtime checks passed"
