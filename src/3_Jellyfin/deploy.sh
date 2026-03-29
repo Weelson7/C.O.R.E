@@ -186,12 +186,14 @@ server {
     location / {
         proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
         proxy_http_version 1.1;
-        proxy_set_header   Host              \$host;
+        proxy_set_header   Host              \$http_host;
         proxy_set_header   X-Real-IP         \$remote_addr;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Host  \$http_host;
         proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_set_header   Upgrade           \$http_upgrade;
         proxy_set_header   Connection        "upgrade";
+        proxy_buffering    off;
         proxy_read_timeout 3600;
     }
 
@@ -298,7 +300,10 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/web/index.html" >/dev/null \
+curl --silent --show-error --fail --insecure \
+  --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
+  --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
+  "https://${DOMAIN}/web/index.html" >/dev/null \
   || fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
 
 echo
