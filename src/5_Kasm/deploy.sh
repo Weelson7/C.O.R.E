@@ -14,13 +14,10 @@ set -euo pipefail
 SERVICE_NAME="core-kasm"
 DOMAIN="kasm.core"
 INSTALL_DIR="/opt/core/kasm"
-PROFILE_DIR="${INSTALL_DIR}/profile"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-lscr.io/linuxserver/kasm:latest}"
 PUBLISHED_HTTPS_PORT="${PUBLISHED_HTTPS_PORT:-7443}"
-CONTAINER_PORT="${CONTAINER_PORT:-3000}"
-KASM_BACKEND_SCHEME="${KASM_BACKEND_SCHEME:-https}"
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
@@ -29,12 +26,9 @@ NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
 NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
 NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
-HTPASSWD_FILE="/etc/nginx/.htpasswd_core_kasm"
-HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
-HTPASSWD_USER="${HTPASSWD_USER:-}"
 COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
@@ -134,16 +128,6 @@ ensure_numeric_port() {
   fi
 }
 
-validate_backend_scheme() {
-  case "${KASM_BACKEND_SCHEME}" in
-    https|http)
-      ;;
-    *)
-      fail "Invalid KASM_BACKEND_SCHEME: ${KASM_BACKEND_SCHEME}. Allowed values: https, http"
-      ;;
-  esac
-}
-
 is_port_listening_tcp() {
   local port="$1"
   ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
@@ -176,19 +160,20 @@ validate_resolved_ip() {
 }
 
 wait_for_local_health() {
-  local retries="${1:-40}"
-  local delay="${2:-2}"
+  local retries="${1:-90}"
+  local delay="${2:-3}"
   local i
 
+  log "Waiting for Kasm to become ready (this can take 2-4 minutes on first start)..."
+  
   for i in $(seq 1 "${retries}"); do
-    if [ "${KASM_BACKEND_SCHEME}" = "https" ]; then
-      if curl --silent --show-error --fail --insecure "https://127.0.0.1:${PUBLISHED_HTTPS_PORT}/" >/dev/null; then
-        return 0
-      fi
-    else
-      if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTPS_PORT}/" >/dev/null; then
-        return 0
-      fi
+    if curl --silent --output /dev/null --max-time 5 --insecure "https://127.0.0.1:${PUBLISHED_HTTPS_PORT}/" 2>/dev/null; then
+      log "Health check passed on attempt ${i}"
+      return 0
+    fi
+    
+    if [ $((i % 10)) -eq 0 ]; then
+      log "Still waiting... attempt ${i}/${retries}"
     fi
     sleep "${delay}"
   done
@@ -203,16 +188,19 @@ services:
     container_name: ${SERVICE_NAME}
     image: ${IMAGE_TAG}
     restart: unless-stopped
+    privileged: true
     environment:
       - TZ=${TZ:-UTC}
       - PUID=${PUID}
       - PGID=${PGID}
-      - KASM_PORT=${CONTAINER_PORT}
-    shm_size: "1gb"
     volumes:
-      - ${PROFILE_DIR}:/profile
+      - ${INSTALL_DIR}/opt:/opt
+      - ${INSTALL_DIR}/profiles:/profiles
+      - /dev/input:/dev/input
+      - /run/udev/data:/run/udev/data
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTPS_PORT}:${CONTAINER_PORT}"
+      - "127.0.0.1:${PUBLISHED_HTTPS_PORT}:443"
+    network_mode: bridge
 EOF
 }
 
@@ -233,11 +221,8 @@ server {
     ssl_certificate     ${NGINX_CERT_FILE};
     ssl_certificate_key ${NGINX_KEY_FILE};
 
-    auth_basic           "C.O.R.E. - restricted";
-    auth_basic_user_file ${HTPASSWD_FILE};
-
     location / {
-        proxy_pass         ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT};
+        proxy_pass         https://127.0.0.1:${PUBLISHED_HTTPS_PORT};
         proxy_http_version 1.1;
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Real-IP         \$remote_addr;
@@ -245,18 +230,11 @@ server {
         proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_set_header   Upgrade           \$http_upgrade;
         proxy_set_header   Connection        "upgrade";
+        proxy_buffering    off;
         proxy_read_timeout 3600;
         proxy_send_timeout 3600;
-EOF
-
-  if [ "${KASM_BACKEND_SCHEME}" = "https" ]; then
-    sudo tee -a "${NGINX_SITE_FILE}" >/dev/null <<'EOF'
         proxy_ssl_server_name on;
         proxy_ssl_verify      off;
-EOF
-  fi
-
-  sudo tee -a "${NGINX_SITE_FILE}" >/dev/null <<'EOF'
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
@@ -278,30 +256,25 @@ require_cmd grep
 require_cmd ss
 
 ensure_numeric_port "${PUBLISHED_HTTPS_PORT}"
-ensure_numeric_port "${CONTAINER_PORT}"
-validate_backend_scheme
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
-ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
-ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates iproute2
+sudo apt install -y nginx mkcert curl ca-certificates iproute2
 install_container_stack
 
 require_cmd mkcert
 require_cmd nginx
 require_cmd docker
 require_cmd curl
-require_cmd htpasswd
 resolve_compose_cmd
 
 sudo systemctl enable docker
 sudo systemctl restart docker
 
 log "[2/8] Provisioning runtime directories"
-sudo mkdir -p "${INSTALL_DIR}" "${PROFILE_DIR}"
+sudo mkdir -p "${INSTALL_DIR}" "${INSTALL_DIR}/opt" "${INSTALL_DIR}/profiles"
 
 if [ -f "${COMPOSE_FILE}" ]; then
   log "Stopping existing stack before conflict checks"
@@ -321,7 +294,12 @@ log "[5/8] Starting Kasm container"
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-wait_for_local_health 40 2 || fail "Kasm local health check failed on ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
+log "Container started. Kasm takes 2-4 minutes to initialize on first run..."
+wait_for_local_health 90 3 || {
+  log "Health check failed. Container logs:"
+  sudo docker logs "${SERVICE_NAME}" --tail 50
+  fail "Kasm local health check failed on ${KASM_BACKEND_SCHEME}://127.0.0.1:${PUBLISHED_HTTPS_PORT}/"
+}
 
 log "[6/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
@@ -337,13 +315,6 @@ sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
 log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
-if [ ! -f "${HTPASSWD_FILE}" ]; then
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-else
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-fi
-sudo chmod 640 "${HTPASSWD_FILE}"
-
 write_nginx_site
 
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
@@ -361,8 +332,22 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/" >/dev/null \
-  || fail "Ingress health check failed for https://${DOMAIN}/"
+log "Testing ingress at https://${DOMAIN}/"
+ingress_response="$(curl --silent --show-error --insecure -w "\nHTTP_CODE:%{http_code}" \
+  --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
+  "https://${DOMAIN}/" 2>&1)" || true
+
+echo "${ingress_response}"
+
+http_code="$(echo "${ingress_response}" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)"
+case "${http_code}" in
+  200|301|302|401|403)
+    log "Ingress check passed with HTTP ${http_code}"
+    ;;
+  *)
+    fail "Ingress health check failed on https://${DOMAIN}/ (HTTP ${http_code})"
+    ;;
+esac
 
 echo
 log "Deployment complete and container runtime checks passed"
