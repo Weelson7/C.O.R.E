@@ -211,7 +211,9 @@ server {
         proxy_set_header   Host              \$http_host;
         proxy_set_header   X-Real-IP         \$remote_addr;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Host  \$server_name;
         proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Port  \$server_port;
         proxy_set_header   Upgrade           \$http_upgrade;
         proxy_set_header   Connection        "upgrade";
         proxy_read_timeout 3600;
@@ -307,7 +309,7 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" | awk '{print $1}' | head -n1)"
 [ -n "${resolved_ip}" ] || fail "DNS resolution failed for ${DOMAIN}"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure \
+curl --silent --show-error --fail --insecure -w "\nHTTP %{http_code}\n" \
   --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
   --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
   "https://${DOMAIN}/" >/dev/null || fail "Ingress health check failed on https://${DOMAIN}/"
@@ -316,4 +318,5 @@ echo
 log "Deployment complete"
 log "Container status: sudo docker ps -f name=${SERVICE_NAME}"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
+log "Nginx error log: sudo tail -50 /var/log/nginx/core-jellyfin.error.log"
 log "Ingress check: curl -k -u <user>:<password> https://${DOMAIN}/"
