@@ -17,8 +17,10 @@ INSTALL_DIR="/opt/core/jupyter"
 WORK_DIR="${INSTALL_DIR}/workspace"
 CONFIG_DIR="${INSTALL_DIR}/config"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+DOCKERFILE="${INSTALL_DIR}/Dockerfile"
 
-IMAGE_TAG="${IMAGE_TAG:-quay.io/jupyter/base-notebook:python-3.11}"
+IMAGE_TAG="${IMAGE_TAG:-core/jupyter:local}"
+BUILD_IMAGE="${BUILD_IMAGE:-true}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-18888}"
 CONTAINER_PORT="${CONTAINER_PORT:-8888}"
 JUPYTER_LAB_ROOT_DIR="${JUPYTER_LAB_ROOT_DIR:-/home/jovyan/work}"
@@ -294,14 +296,19 @@ if [ -f "${COMPOSE_FILE}" ]; then
 fi
 sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
 
-log "[3/8] Enforcing no-port-conflict policy"
+log "[3/8] Building custom Jupyter image with Java and C++ kernels"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sudo cp -f "${SCRIPT_DIR}/Dockerfile" "${DOCKERFILE}"
+sudo docker build -t "${IMAGE_TAG}" -f "${DOCKERFILE}" "${INSTALL_DIR}" || fail "Docker build failed"
+
+log "[4/8] Enforcing no-port-conflict policy"
 # Single localhost binding keeps all Jupyter kernel ports internal to the container.
 assert_host_port_available "${PUBLISHED_HTTP_PORT}"
 
-log "[4/8] Writing container runtime definition"
+log "[5/8] Writing container runtime definition"
 write_compose_file
 
-log "[5/8] Starting Jupyter container"
+log "[6/8] Starting Jupyter container"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
@@ -309,7 +316,7 @@ container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 
 
 wait_for_local_health 40 2 || fail "Jupyter local health check failed on http://127.0.0.1:${PUBLISHED_HTTP_PORT}/api"
 
-log "[6/8] Provisioning TLS material for ${DOMAIN}"
+log "[7/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-jupyter-cert.XXXXXX.pem)"
@@ -322,7 +329,7 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[8/8] Writing and validating Nginx ingress for ${DOMAIN}"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
   printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 else

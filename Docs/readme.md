@@ -18,7 +18,7 @@ This file is the fast index for the Docs folder.
 	- [Docs/Services/7_ttyd.md](Services/7_ttyd.md)
 	- [Docs/Services/8_qBittorrent.md](Services/8_qBittorrent.md)
 	- [Docs/Services/9_Jupyter.md](Services/9_Jupyter.md)
-	- [Docs/Services/10_Stirling.md](Services/10_Stirling.md)
+	- [Docs/Services/10_OnlyOffice.md](Services/10_OnlyOffice.md)
 	- [Docs/Services/11_Doom.md](Services/11_Doom.md)
 	- [Docs/Services/12_Seafile.md](Services/12_Seafile.md)
 - Architecture

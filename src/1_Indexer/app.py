@@ -258,8 +258,8 @@ SERVICE_CATALOG = [
         "wip": False,
     },
     {
-        "name": "Stirling",
-        "domain": "stirling.core",
+        "name": "OnlyOffice",
+        "domain": "onlyoffice.core",
         "description": "Document tooling",
         "node": "node-0",
         "role": "alpha",

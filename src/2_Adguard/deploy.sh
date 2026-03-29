@@ -45,7 +45,7 @@ DEFAULT_REWRITE_DOMAINS=(
 	"ttyd.core"
 	"qbittorrent.core"
 	"jupyter.core"
-	"stirling.core"
+	"onlyoffice.core"
 	"doom.zenith.su"
 	"supervisor.core"
 )

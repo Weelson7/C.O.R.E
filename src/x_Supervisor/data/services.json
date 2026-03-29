@@ -67,7 +67,7 @@
   {
     "id": "5_Kasm",
     "name": "Kasm",
-    "status": "unknown",
+    "status": "healthy",
     "containerized": true,
     "storageLocation": "/opt/core/kasm",
     "domain": "kasm.core",
@@ -130,12 +130,12 @@
     }
   },
   {
-    "id": "10_Stirling",
-    "name": "Stirling",
+    "id": "10_OnlyOffice",
+    "name": "OnlyOffice",
     "status": "unknown",
     "containerized": true,
-    "storageLocation": "/opt/core/stirling",
-    "domain": "stirling.core",
+    "storageLocation": "/opt/core/onlyoffice",
+    "domain": "onlyoffice.core",
     "roleAssignments": {
       "alpha": "node-0",
       "beta": null,
