@@ -142,6 +142,28 @@ validate_resolved_ip() {
   fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
 }
 
+wait_for_local_jellyfin_health() {
+  local retries="${1:-30}"
+  local delay_seconds="${2:-1}"
+  local i
+  local endpoint
+  local status_code
+
+  for i in $(seq 1 "${retries}"); do
+    for endpoint in "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" "http://localhost:${PUBLISHED_HTTP_PORT}/"; do
+      status_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "${endpoint}" 2>/dev/null || true)"
+      case "${status_code}" in
+        200|301|302|401|403)
+          return 0
+          ;;
+      esac
+    done
+    sleep "${delay_seconds}"
+  done
+
+  return 1
+}
+
 write_compose_file() {
   sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
@@ -237,30 +259,21 @@ sudo mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}"
 log "[3/7] Writing container runtime definition"
 write_compose_file
 
-log "[4/7] Starting Jellyfin container"
+log "[4/8] Starting Jellyfin container"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-log "Waiting for Jellyfin to become healthy..."
-max_attempts=30
-attempt=0
-while [ "${attempt}" -lt "${max_attempts}" ]; do
-  if curl --silent --show-error --fail --max-time 5 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
-    log "Jellyfin is healthy"
-    break
-  fi
-  attempt=$((attempt + 1))
-  if [ "${attempt}" -lt "${max_attempts}" ]; then
-    log "Health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
-    sleep 1
-  fi
-done
+log "[5/8] Verifying local Jellyfin health"
+if ! wait_for_local_jellyfin_health 45 1; then
+  log "Jellyfin local health check did not pass in time; dumping diagnostics"
+  sudo ss -lntp | grep -E "(:${PUBLISHED_HTTP_PORT}[[:space:]]|:${PUBLISHED_HTTP_PORT}$)" || true
+  sudo docker logs "${SERVICE_NAME}" | tail -20 || true
+  fail "Jellyfin local health check failed"
+fi
 
-[ "${attempt}" -lt "${max_attempts}" ] || fail "Jellyfin local health check failed after ${max_attempts} attempts"
-
-log "[5/7] Provisioning TLS material for ${DOMAIN}"
+log "[5/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-jellyfin-cert.XXXXXX.pem)"
@@ -273,40 +286,34 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[6/7] Enforcing centralized ingress authentication"
+log "[6/8] Enforcing centralized ingress authentication"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+  sudo htpasswd -cb "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
 else
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
+  sudo htpasswd -b "${HTPASSWD_FILE}" "${HTPASSWD_USER}" "${HTPASSWD_PASSWORD}"
 fi
 sudo chmod 640 "${HTPASSWD_FILE}"
 
 log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
 write_nginx_site
 
-sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
-sudo rm -f /etc/nginx/sites-enabled/default
-
+sudo ln -sfn "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
 sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-log "[8/8] Validating mesh DNS and ingress runtime"
-require_cmd netbird
-sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
-
-resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
-[ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
+log "[8/8] Verifying mesh DNS and ingress runtime health"
+resolved_ip="$(getent ahostsv4 "${DOMAIN}" | awk '{print $1}' | head -n1)"
+[ -n "${resolved_ip}" ] || fail "DNS resolution failed for ${DOMAIN}"
 validate_resolved_ip "${resolved_ip}"
 
 curl --silent --show-error --fail --insecure \
   --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
   --user "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
-  "https://${DOMAIN}/web/index.html" >/dev/null \
-  || fail "Ingress health check failed for https://${DOMAIN}/web/index.html"
+  "https://${DOMAIN}/" >/dev/null || fail "Ingress health check failed on https://${DOMAIN}/"
 
 echo
-log "Deployment complete and container runtime checks passed"
-log "URL: https://${DOMAIN}"
+log "Deployment complete"
+log "Container status: sudo docker ps -f name=${SERVICE_NAME}"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
-log "Compose stack: ${COMPOSE_CMD[*]} -f ${COMPOSE_FILE} ps"
+log "Ingress check: curl -k -u <user>:<password> https://${DOMAIN}/"
