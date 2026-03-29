@@ -179,7 +179,7 @@ services:
       - ${CACHE_DIR}:/cache
       - ${MEDIA_DIR}:/media:ro
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:8096"
+      - "${PUBLISHED_HTTP_PORT}:8096"
 EOF
 }
 
@@ -208,16 +208,9 @@ server {
     location / {
         proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
         proxy_http_version 1.1;
-        proxy_set_header   Host              \$http_host;
-        proxy_set_header   X-Real-IP         \$remote_addr;
-        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Host  \$server_name;
+        proxy_set_header   Host \$host;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Port  \$server_port;
-        proxy_set_header   Upgrade           \$http_upgrade;
-        proxy_set_header   Connection        "upgrade";
         proxy_read_timeout 3600;
-        proxy_send_timeout 3600;
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
