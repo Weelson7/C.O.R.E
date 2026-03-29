@@ -143,17 +143,22 @@ validate_resolved_ip() {
 }
 
 wait_for_local_health() {
-  local retries="${1:-30}"
-  local delay="${2:-2}"
+  local retries="${1:-60}"
+  local delay="${2:-3}"
   local i
 
   for i in $(seq 1 "${retries}"); do
-    if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" >/dev/null; then
+    if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" >/dev/null 2>&1; then
+      log "Container health check passed on attempt ${i}"
       return 0
     fi
+    log "Health check attempt ${i}/${retries} - waiting ${delay}s before retry..."
     sleep "${delay}"
   done
 
+  log "Container health check failed after ${retries} attempts (${retries} * ${delay}s = $(( retries * delay ))s)"
+  log "Container logs:"
+  sudo docker logs "${SERVICE_NAME}" --tail 30
   return 1
 }
 
@@ -175,6 +180,12 @@ services:
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
     ports:
       - "0.0.0.0:${PUBLISHED_HTTP_PORT}:4567"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4567/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 EOF
 }
 
@@ -292,7 +303,10 @@ log "[4/8] Starting Suwayomi container"
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-wait_for_local_health 30 2 || fail "Suwayomi local health check failed"
+log "Container ${SERVICE_NAME} is running, waiting for application startup..."
+log "Note: Suwayomi is a Java application and may take 30-60 seconds to fully start"
+
+wait_for_local_health 60 3 || fail "Suwayomi local health check failed"
 
 log "[5/8] Bootstrapping Tachiyomi extension settings"
 bootstrap_tachiyomi_extension
