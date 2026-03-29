@@ -180,12 +180,6 @@ services:
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
     ports:
       - "0.0.0.0:${PUBLISHED_HTTP_PORT}:4567"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4567/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 EOF
 }
 
@@ -276,7 +270,7 @@ ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expecte
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
 ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
-log "[1/8] Installing deployment dependencies"
+log "[1/9] Installing deployment dependencies"
 sudo apt update -y
 sudo apt install -y nginx mkcert apache2-utils curl ca-certificates
 install_container_stack
@@ -291,27 +285,38 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/8] Provisioning runtime directories"
+log "[2/9] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${DOWNLOADS_DIR}" "${EXTENSIONS_DIR}"
 
-log "[3/8] Writing container runtime definition"
+log "[3/9] Writing container runtime definition"
 write_compose_file
 
-log "[4/8] Starting Suwayomi container"
-"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
+log "[4/9] Stopping and removing any existing Suwayomi container"
+sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
+sudo docker rm -f "${SERVICE_NAME}" 2>/dev/null || true
+
+log "[5/9] Starting Suwayomi container (fresh)"
+"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate --pull always
+
+# Wait a moment for container to initialize
+sleep 5
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
-[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
+if [ "${container_state}" != "running" ]; then
+  log "Container is not running. Checking for errors..."
+  sudo docker logs "${SERVICE_NAME}" --tail 50 2>&1 || true
+  fail "Container ${SERVICE_NAME} is not running (state: ${container_state:-not found})"
+fi
 
 log "Container ${SERVICE_NAME} is running, waiting for application startup..."
 log "Note: Suwayomi is a Java application and may take 30-60 seconds to fully start"
 
 wait_for_local_health 60 3 || fail "Suwayomi local health check failed"
 
-log "[5/8] Bootstrapping Tachiyomi extension settings"
+log "[6/9] Bootstrapping Tachiyomi extension settings"
 bootstrap_tachiyomi_extension
 
-log "[6/8] Provisioning TLS material for ${DOMAIN}"
+log "[7/9] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
 
 tmp_cert="$(mktemp /tmp/core-suwayomi-cert.XXXXXX.pem)"
@@ -324,7 +329,7 @@ sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
-log "[7/8] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[8/9] Writing and validating Nginx ingress for ${DOMAIN}"
 if [ ! -f "${HTPASSWD_FILE}" ]; then
   printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
 else
@@ -341,7 +346,7 @@ sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-log "[8/8] Validating mesh DNS and ingress runtime"
+log "[9/9] Validating mesh DNS and ingress runtime"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
