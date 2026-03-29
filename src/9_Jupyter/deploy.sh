@@ -34,12 +34,9 @@ NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
 NGINX_KEY_FILE="${NGINX_SSL_DIR}/${DOMAIN}.key"
 NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
-HTPASSWD_FILE="/etc/nginx/.htpasswd_core_jupyter"
-HTPASSWD_PASSWORD="${HTPASSWD_PASSWORD:-}"
 
 NETBIRD_DEVICE_IP="${NETBIRD_DEVICE_IP:-}"
 NETBIRD_FAILOVER_IP="${NETBIRD_FAILOVER_IP:-}"
-HTPASSWD_USER="${HTPASSWD_USER:-}"
 COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
@@ -218,41 +215,32 @@ write_nginx_site() {
   sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
 server {
     listen 80;
-    listen [::]:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     ${NGINX_CERT_FILE};
     ssl_certificate_key ${NGINX_KEY_FILE};
 
-    auth_basic           "C.O.R.E. - restricted";
-    auth_basic_user_file ${HTPASSWD_FILE};
-
     location / {
-        proxy_pass         http://127.0.0.1:${PUBLISHED_HTTP_PORT};
+        proxy_pass http://127.0.0.1:${PUBLISHED_HTTP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # WebSocket support
         proxy_http_version 1.1;
-        proxy_set_header   Host              \$host;
-        proxy_set_header   X-Real-IP         \$remote_addr;
-        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   Upgrade           \$http_upgrade;
-        proxy_set_header   Connection        "upgrade";
-        proxy_read_timeout 3600;
-        proxy_send_timeout 3600;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 
-    add_header X-Frame-Options        "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy        "same-origin" always;
-
     access_log /var/log/nginx/core-jupyter.access.log;
-    error_log  /var/log/nginx/core-jupyter.error.log warn;
+    error_log  /var/log/nginx/core-jupyter.error.log;
 }
 EOF
 }
@@ -269,19 +257,16 @@ ensure_numeric_port "${PUBLISHED_HTTP_PORT}"
 ensure_numeric_port "${CONTAINER_PORT}"
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
-ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
-ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
 
-log "[1/8] Installing deployment dependencies"
+log "[1/9] Installing deployment dependencies"
 sudo apt update -y
-sudo apt install -y nginx mkcert apache2-utils curl ca-certificates iproute2
+sudo apt install -y nginx mkcert curl ca-certificates iproute2
 install_container_stack
 
 require_cmd mkcert
 require_cmd nginx
 require_cmd docker
 require_cmd curl
-require_cmd htpasswd
 resolve_compose_cmd
 
 sudo systemctl enable docker
