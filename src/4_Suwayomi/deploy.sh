@@ -252,6 +252,8 @@ bootstrap_tachiyomi_extension() {
   sudo mkdir -p "${EXTENSIONS_DIR}"
   sudo mv -f "${tmp_apk}" "${EXTENSIONS_DIR}/${extension_name}"
   sudo chmod 644 "${EXTENSIONS_DIR}/${extension_name}"
+  # Ensure container user (UID 1000) can access extensions
+  sudo chown -R 1000:1000 "${EXTENSIONS_DIR}"
 
   sudo docker restart "${SERVICE_NAME}" >/dev/null
   wait_for_local_health 30 2 || fail "Suwayomi did not become healthy after extension bootstrap restart"
@@ -287,6 +289,8 @@ sudo systemctl restart docker
 
 log "[2/9] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${DOWNLOADS_DIR}" "${EXTENSIONS_DIR}"
+# Suwayomi container runs as non-root user (UID 1000), directories must be writable
+sudo chown -R 1000:1000 "${DATA_DIR}" "${DOWNLOADS_DIR}"
 
 log "[3/9] Writing container runtime definition"
 write_compose_file
