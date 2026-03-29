@@ -159,8 +159,12 @@ services:
       - ${CACHE_DIR}:/cache
       - ${MEDIA_DIR}:/media:ro
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:8096"
-    network_mode: bridge
+      - "0.0.0.0:${PUBLISHED_HTTP_PORT}:8096"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 EOF
 }
 
@@ -249,25 +253,63 @@ write_compose_file
 log "[4/7] Starting Jellyfin container"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 
-container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
-[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
+sleep 2
 
-log "Waiting for Jellyfin to become healthy..."
+container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
+if [ "${container_state}" != "running" ]; then
+  log "ERROR: Container state is '${container_state}', not running"
+  log "Container inspect output:"
+  sudo docker inspect "${SERVICE_NAME}" 2>&1 | head -30
+  log "Recent container logs:"
+  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -50
+  fail "Container ${SERVICE_NAME} failed to start"
+fi
+
+log "Waiting for Jellyfin HTTP port to be accessible..."
 max_attempts=30
 attempt=0
 while [ "${attempt}" -lt "${max_attempts}" ]; do
-  if curl --silent --show-error --fail --max-time 5 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
-    log "Jellyfin is healthy"
+  if timeout 3 bash -c "</dev/tcp/127.0.0.1/${PUBLISHED_HTTP_PORT}" 2>/dev/null; then
+    log "Port ${PUBLISHED_HTTP_PORT} is listening"
     break
   fi
   attempt=$((attempt + 1))
   if [ "${attempt}" -lt "${max_attempts}" ]; then
-    log "Health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
+    log "Port check attempt ${attempt}/${max_attempts} - port not listening yet; retrying in 1s..."
     sleep 1
   fi
 done
 
-[ "${attempt}" -lt "${max_attempts}" ] || fail "Jellyfin local health check failed after ${max_attempts} attempts"
+if [ "${attempt}" -ge "${max_attempts}" ]; then
+  log "ERROR: Jellyfin port ${PUBLISHED_HTTP_PORT} never became accessible"
+  log "Container status: $(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}")"
+  log "Container logs (last 100 lines):"
+  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -100
+  fail "Port ${PUBLISHED_HTTP_PORT} did not open; check container logs above"
+fi
+
+log "Waiting for Jellyfin HTTP health endpoint..."
+attempt=0
+while [ "${attempt}" -lt "${max_attempts}" ]; do
+  if curl --silent --show-error --fail --max-time 3 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
+    log "Jellyfin HTTP endpoint is healthy"
+    break
+  fi
+  attempt=$((attempt + 1))
+  if [ "${attempt}" -lt "${max_attempts}" ]; then
+    log "HTTP health check attempt ${attempt}/${max_attempts} failed; retrying in 1s..."
+    sleep 1
+  fi
+done
+
+if [ "${attempt}" -ge "${max_attempts}" ]; then
+  log "ERROR: Jellyfin HTTP endpoint never responded"
+  log "Recent curl output:"
+  curl -v "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" 2>&1 || true
+  log "Container logs (last 100 lines):"
+  sudo docker logs "${SERVICE_NAME}" 2>&1 | tail -100
+  fail "Jellyfin HTTP health check failed"
+fi
 
 log "[5/7] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
