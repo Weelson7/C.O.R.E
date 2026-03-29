@@ -163,6 +163,8 @@ wait_for_local_health() {
 }
 
 write_compose_file() {
+  local extension_repos="${EXTENSION_REPOS:-https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json}"
+  
   sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
   suwayomi:
@@ -170,11 +172,11 @@ services:
     image: ${IMAGE_TAG}
     restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
-      - BIND_IP=0.0.0.0
-      - BIND_PORT=4567
-      - WEB_UI_ENABLED=true
-      - EXTENSION_REPOS=${EXTENSION_REPOS:-https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json}
+      TZ: "${TZ:-UTC}"
+      BIND_IP: "0.0.0.0"
+      BIND_PORT: "4567"
+      WEB_UI_ENABLED: "true"
+      EXTENSION_REPOS: "${extension_repos}"
     volumes:
       - ${DATA_DIR}:/home/suwayomi/.local/share/Tachidesk
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
