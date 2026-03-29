@@ -21,6 +21,7 @@ This file is the fast index for the Docs folder.
 	- [Docs/Services/10_OnlyOffice.md](Services/10_OnlyOffice.md)
 	- [Docs/Services/11_Doom.md](Services/11_Doom.md)
 	- [Docs/Services/12_Seafile.md](Services/12_Seafile.md)
+	- [Docs/Services/13_ncdu-web-viewer.md](Services/13_ncdu-web-viewer.md)
 - Architecture
 	- [Docs/Architecture.md](Architecture.md)
 

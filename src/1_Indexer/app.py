@@ -291,6 +291,17 @@ SERVICE_CATALOG = [
         "wip": False,
     },
     {
+        "name": "ncdu-web-viewer",
+        "domain": "ncdu.core",
+        "description": "Interactive disk usage analyzer",
+        "node": "node-0",
+        "role": "alpha",
+        "status": "online",
+        "tag": "ops",
+        "ingressPath": "supervisor",
+        "wip": False,
+    },
+    {
         "name": "Supervisor",
         "domain": "supervisor.core",
         "description": "Cluster orchestration control surface",
