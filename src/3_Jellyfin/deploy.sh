@@ -243,8 +243,8 @@ container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
 log "Waiting for Jellyfin to become healthy..."
-local max_attempts=30
-local attempt=0
+max_attempts=30
+attempt=0
 while [ "${attempt}" -lt "${max_attempts}" ]; do
   if curl --silent --show-error --fail --max-time 5 "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/web/index.html" >/dev/null 2>&1; then
     log "Jellyfin is healthy"
