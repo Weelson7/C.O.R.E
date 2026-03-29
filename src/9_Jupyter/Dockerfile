@@ -2,10 +2,11 @@ FROM quay.io/jupyter/base-notebook:python-3.11
 
 USER root
 
-# Install Java and build dependencies for xeus-cling
+# Install Java, unzip, and build dependencies for xeus-cling
 RUN apt-get update && apt-get install -y \
     openjdk-17-jdk \
     wget \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 USER ${NB_UID}
