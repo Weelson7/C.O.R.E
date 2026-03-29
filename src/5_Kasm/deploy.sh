@@ -112,19 +112,32 @@ server {
     ssl_certificate_key ${NGINX_KEY_FILE};
 
     location / {
-        proxy_pass         https://127.0.0.1:${KASM_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header   Host              \$host;
-        proxy_set_header   X-Real-IP         \$remote_addr;
-        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        # WebSocket Support
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+
+        # Host and X headers
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   Upgrade           \$http_upgrade;
-        proxy_set_header   Connection        "upgrade";
+        # Should match the listening port of this proxy
+        proxy_set_header   X-Forwarded-Port 443;
+
+        # Connectivity Options
+        proxy_http_version 1.1;
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+        proxy_connect_timeout 1800s;
         proxy_buffering    off;
-        proxy_read_timeout 3600;
-        proxy_send_timeout 3600;
+
+        # Allow large requests to support file uploads to sessions
+        client_max_body_size 10M;
+
+        # Proxy to Kasm Workspaces running locally on ${KASM_PORT} using ssl
+        proxy_pass         https://127.0.0.1:${KASM_PORT};
         proxy_ssl_server_name on;
-        proxy_ssl_verify      off;
+        proxy_ssl_verify   off;
     }
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
@@ -235,9 +248,34 @@ write_nginx_site
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
 sudo rm -f /etc/nginx/sites-enabled/default
 
-sudo nginx -t
+log "Testing nginx configuration..."
+sudo nginx -t || fail "Nginx configuration test failed"
+
+log "Restarting nginx..."
 sudo systemctl enable nginx
 sudo systemctl restart nginx
+
+# Verify nginx is running
+sleep 2
+if ! sudo systemctl is-active --quiet nginx; then
+  log "ERROR: Nginx failed to start. Status:"
+  sudo systemctl status nginx
+  fail "Nginx is not running"
+fi
+
+# Test the proxy works locally
+log "Testing nginx proxy to Kasm..."
+proxy_test="$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 10 "https://127.0.0.1/" 2>&1)" || true
+if [ "${proxy_test}" = "000" ]; then
+  log "ERROR: Proxy test failed. Checking nginx error log:"
+  sudo tail -20 /var/log/nginx/kasm.error.log || true
+  log ""
+  log "Checking if Kasm is reachable directly:"
+  curl -k -s -o /dev/null -w 'HTTP %{http_code}\n' "https://127.0.0.1:${KASM_PORT}/" || true
+  fail "Nginx proxy to Kasm failed"
+else
+  log "Proxy test returned HTTP ${proxy_test}"
+fi
 
 log "[7/7] Validating mesh DNS and ingress runtime"
 require_cmd netbird
