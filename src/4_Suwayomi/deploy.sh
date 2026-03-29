@@ -174,7 +174,7 @@ services:
       - ${DATA_DIR}:/home/suwayomi/.local/share/Tachidesk
       - ${DOWNLOADS_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:4567"
+      - "0.0.0.0:${PUBLISHED_HTTP_PORT}:4567"
 EOF
 }
 
