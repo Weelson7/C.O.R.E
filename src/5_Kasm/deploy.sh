@@ -98,54 +98,33 @@ write_nginx_site() {
   sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
 server {
     listen 80;
-    listen [::]:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     ${NGINX_CERT_FILE};
     ssl_certificate_key ${NGINX_KEY_FILE};
 
     location / {
-        # WebSocket Support
-        proxy_set_header   Upgrade \$http_upgrade;
-        proxy_set_header   Connection "upgrade";
-
-        # Host and X headers
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        # Should match the listening port of this proxy
-        proxy_set_header   X-Forwarded-Port 443;
-
-        # Connectivity Options
+        proxy_pass https://127.0.0.1:8443;
+        proxy_ssl_verify off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # WebSocket support
         proxy_http_version 1.1;
-        proxy_read_timeout 1800s;
-        proxy_send_timeout 1800s;
-        proxy_connect_timeout 1800s;
-        proxy_buffering    off;
-
-        # Allow large requests to support file uploads to sessions
-        client_max_body_size 10M;
-
-        # Proxy to Kasm Workspaces running locally on ${KASM_PORT} using ssl
-        proxy_pass         https://127.0.0.1:${KASM_PORT};
-        proxy_ssl_server_name on;
-        proxy_ssl_verify   off;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 
-    add_header X-Frame-Options        "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy        "same-origin" always;
-
     access_log /var/log/nginx/kasm.access.log;
-    error_log  /var/log/nginx/kasm.error.log warn;
+    error_log  /var/log/nginx/kasm.error.log;
 }
 EOF
 }
@@ -277,7 +256,33 @@ else
   log "Proxy test returned HTTP ${proxy_test}"
 fi
 
-log "[7/7] Validating mesh DNS and ingress runtime"
+log "[7/8] Configuring Kasm Zone for reverse proxy"
+# Update the Zone configuration in the database to work behind nginx
+# This sets upstream_auth_address to 127.0.0.1 and proxy_port to 0
+log "Updating Kasm Zone configuration for reverse proxy..."
+
+# Find the kasm_db container
+KASM_DB_CONTAINER="$(sudo docker ps --format '{{.Names}}' | grep -E 'kasm_db' | head -1)"
+
+if [ -n "${KASM_DB_CONTAINER}" ]; then
+  log "Found database container: ${KASM_DB_CONTAINER}"
+  
+  # Update zone settings - set upstream_auth_address and proxy_port
+  sudo docker exec "${KASM_DB_CONTAINER}" psql -U kasmapp -d kasm -c \
+    "UPDATE zones SET upstream_auth_address = '127.0.0.1', proxy_port = 0 WHERE zone_name = 'default';" 2>/dev/null || {
+    log "WARNING: Could not auto-configure zone. Please configure manually:"
+    log "  1. Go to https://${DOMAIN} -> Infrastructure -> Zones"
+    log "  2. Edit 'default' zone"
+    log "  3. Set 'Upstream Auth Address' to '127.0.0.1'"
+    log "  4. Set 'Proxy Port' to '0'"
+  }
+  
+  log "Zone configuration updated for reverse proxy"
+else
+  log "WARNING: Could not find kasm_db container. Zone config must be set manually."
+fi
+
+log "[8/8] Validating mesh DNS and ingress runtime"
 require_cmd netbird
 sudo netbird status >/dev/null 2>&1 || fail "Netbird is not connected; cannot validate mesh DNS contract"
 
