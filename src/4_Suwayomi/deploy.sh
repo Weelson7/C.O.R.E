@@ -19,7 +19,7 @@ DOWNLOADS_DIR="${INSTALL_DIR}/downloads"
 EXTENSIONS_DIR="${DATA_DIR}/extensions"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
-IMAGE_TAG="${IMAGE_TAG:-ghcr.io/suwayomi/suwayomi-server:latest}"
+IMAGE_TAG="${IMAGE_TAG:-ghcr.io/suwayomi/suwayomi-server:preview}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-4567}"
 TACHIYOMI_EXTENSION_URL="${TACHIYOMI_EXTENSION_URL:-}"
 

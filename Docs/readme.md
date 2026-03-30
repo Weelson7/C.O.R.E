@@ -14,7 +14,7 @@ This file is the fast index for the Docs folder.
 	- [Docs/Services/3_Jellyfin.md](Services/3_Jellyfin.md)
 	- [Docs/Services/4_Suwayomi.md](Services/4_Suwayomi.md)
 	- [Docs/Services/5_Kasm.md](Services/5_Kasm.md)
-	- [Docs/Services/6_Crafty.md](Services/6_Crafty.md)
+	- [Docs/Services/6_Seanime.md](Services/6_Seanime.md)
 	- [Docs/Services/7_ttyd.md](Services/7_ttyd.md)
 	- [Docs/Services/8_qBittorrent.md](Services/8_qBittorrent.md)
 	- [Docs/Services/9_Jupyter.md](Services/9_Jupyter.md)

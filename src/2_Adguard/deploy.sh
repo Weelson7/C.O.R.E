@@ -41,7 +41,7 @@ DEFAULT_REWRITE_DOMAINS=(
 	"jellyfin.core"
 	"suwayomi.core"
 	"kasm.core"
-	"crafty.core"
+	"seanime.core"
 	"ttyd.core"
 	"qbittorrent.core"
 	"jupyter.core"
