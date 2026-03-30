@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Extra 4 - DOOM WASM Wipe (doom.zenith.su)
+# CONTROL_HEADER: Extra 4 - DOOM WASM Wipe (doom.core)
 
-DOMAIN="doom.zenith.su"
+DOMAIN="doom.core"
 NGINX_SSL_DIR="/etc/nginx/ssl"
-NGINX_SITE_FILE="/etc/nginx/sites-available/doom.zenith.su"
-NGINX_SITE_LINK="/etc/nginx/sites-enabled/doom.zenith.su"
+NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/${DOMAIN}"
+LEGACY_DOMAIN="doom.zenith.su"
+LEGACY_SITE_FILE="/etc/nginx/sites-available/${LEGACY_DOMAIN}"
+LEGACY_SITE_LINK="/etc/nginx/sites-enabled/${LEGACY_DOMAIN}"
 WEB_ROOT="/var/www/doom"
 EMSDK_DIR="/opt/emsdk"
 FORCE="${FORCE:-false}"
@@ -53,6 +56,7 @@ sudo rm -rf "${EMSDK_DIR}"
 
 log "Removing nginx ingress and TLS artifacts"
 sudo rm -f "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
+sudo rm -f "${LEGACY_SITE_FILE}" "${LEGACY_SITE_LINK}"
 sudo rm -f "${NGINX_SSL_DIR}/doom.crt" "${NGINX_SSL_DIR}/doom.key"
 sudo rm -f /var/log/nginx/doom.access.log /var/log/nginx/doom.error.log
 

@@ -16,8 +16,8 @@
 ## Pre-Deployment Checklist
 
 **Storage — provision before any phase:**
-- `/media/{movies,tv,music,books}` — shared with services 3 and 8
-- `/downloads` — shared with service 8
+- `/media/{movies,tv,music,books}` — shared with services 3 and 6
+- `/downloads` — shared with service 6
 - `/mnt/breach-data` — dedicated volume, ≥ 200 GB, separate disk
 
 **Port reservation:**
@@ -86,7 +86,7 @@ docker run -d --name core-radarr \
   lscr.io/linuxserver/radarr:latest
 ```
 
-- Wire `/downloads` to the same path as qBittorrent (service 8).
+- Wire `/downloads` to the same path as qBittorrent (service 6).
 - Wire `/movies`, `/tv`, `/music`, `/books` to the same paths as Jellyfin (service 3).
 - After deploy: add qBittorrent as download client using `qbittorrent.core`, then connect Prowlarr sync.
 
@@ -137,7 +137,7 @@ server {
 - [ ] `jellyseerr.core` — submit a movie request and confirm it appears in Radarr
 
 ### Supervisor Policy
-Services 15–21 are a **collocated group** — assign all to the same alpha node as Jellyfin (3) and qBittorrent (8). Volume sharing makes cross-node placement impractical without a network filesystem.
+Services 15–21 are a **collocated group** — assign all to the same alpha node as Jellyfin (3) and qBittorrent (6). Volume sharing makes cross-node placement impractical without a network filesystem.
 
 
 ---

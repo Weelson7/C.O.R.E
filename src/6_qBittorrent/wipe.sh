@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 8 - C.O.R.E qBittorrent Wipe (qbittorrent.core)
+# CONTROL_HEADER: Service 6 - C.O.R.E qBittorrent Wipe (qbittorrent.core)
 
 DOMAIN="qbittorrent.core"
 SERVICE_NAME="core-qbittorrent"

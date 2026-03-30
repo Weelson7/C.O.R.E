@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 6 - C.O.R.E Seanime Wipe (seanime.core)
+# CONTROL_HEADER: Service 8 - C.O.R.E Seanime Wipe (seanime.core)
 
 DOMAIN="seanime.core"
 SERVICE_NAME="core-seanime"

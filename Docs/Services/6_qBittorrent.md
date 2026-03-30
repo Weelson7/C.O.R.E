@@ -8,9 +8,9 @@
 - [Files](#files)
 
 ## Infos
-- What it is: A containerized qBittorrent deployment exposed through C.O.R.E mesh ingress.
-- What it does: Serves the qBittorrent WebUI (qbittorrent-nox/headless runtime profile) via `qbittorrent.core` over Nginx TLS while running torrent traffic on dedicated TCP/UDP ports.
-- Why this service exists in C.O.R.E: It provides a private, mesh-scoped download client that integrates with the automation stack (*arr services) using shared download paths.
+- What it is: A containerized qBittorrent deployment exposed through C.O.R.E mesh ingress as service 6.
+- What it does: Serves the qBittorrent WebUI (qbittorrent-nox/headless runtime profile) via `qbittorrent.core` over Nginx TLS while running torrent traffic on dedicated TCP/UDP ports. Provides torrent download capability to Seanime (service 8).
+- Why this service exists in C.O.R.E: It replaces service slot 6 with a private, mesh-scoped download client that integrates with Seanime (service 8) using shared `/downloads` paths.
 
 ## Commands
 - Start: `sudo docker compose -f /opt/core/qbittorrent/compose.yaml up -d`
@@ -18,7 +18,7 @@
 - Restart: `sudo docker compose -f /opt/core/qbittorrent/compose.yaml up -d --force-recreate`
 - Status: `sudo docker compose -f /opt/core/qbittorrent/compose.yaml ps` and `sudo docker inspect -f '{{.State.Status}}' core-qbittorrent`
 - Logs: `sudo docker logs -f core-qbittorrent` and `sudo tail -f /var/log/nginx/core-qbittorrent.error.log`
-- Edit/Reload: edit `src/8_qBittorrent/deploy.sh`, rerun deploy script, then `sudo nginx -t ; sudo systemctl reload nginx`
+- Edit/Reload: edit `src/6_qBittorrent/deploy.sh`, rerun deploy script, then `sudo nginx -t ; sudo systemctl reload nginx`
 
 ## Runtime parameters
 - Node(s): Service roles are Supervisor-managed. Current default assignment is alpha on `node-0`.
@@ -28,8 +28,8 @@
 	- Internal WebUI publish: `127.0.0.1:18081` -> container `8080` (default)
 	- Torrent listener: host `6881/tcp` and `6881/udp` -> container `6881/tcp+udp` (default)
 - Volumes/Data path:
-	- Deploy script: `src/8_qBittorrent/deploy.sh`
-	- Wipe script: `src/8_qBittorrent/wipe.sh`
+	- Deploy script: `src/6_qBittorrent/deploy.sh`
+	- Wipe script: `src/6_qBittorrent/wipe.sh`
 	- Runtime root: `/opt/core/qbittorrent`
 	- qBittorrent config volume: `/opt/core/qbittorrent/config`
 	- Shared downloads volume: `/downloads` (default)
@@ -103,8 +103,8 @@ Failure handling notes:
 - Netbird disconnected: restore mesh connectivity before rerunning final validation step.
 
 ## Files
-- `src/8_qBittorrent/deploy.sh`: Idempotent deployment script for qBittorrent runtime, TLS ingress, and mesh validation.
-- `src/8_qBittorrent/wipe.sh`: Cleanup script for runtime artifacts, ingress config, container/image, and optional package purge.
+- `src/6_qBittorrent/deploy.sh`: Idempotent deployment script for qBittorrent runtime, TLS ingress, and mesh validation.
+- `src/6_qBittorrent/wipe.sh`: Cleanup script for runtime artifacts, ingress config, container/image, and optional package purge.
 - `/opt/core/qbittorrent/compose.yaml`: Generated container orchestration definition.
 - `/etc/nginx/sites-available/qbittorrent.core`: Generated ingress virtual host configuration.
 - `/etc/nginx/ssl/qbittorrent.core.crt`: Generated TLS certificate used by Nginx.

@@ -78,12 +78,12 @@
     }
   },
   {
-    "id": "6_Seanime",
-    "name": "Seanime",
+    "id": "6_qBittorrent",
+    "name": "qBittorrent",
     "status": "unknown",
     "containerized": true,
-    "storageLocation": "/opt/core/seanime",
-    "domain": "seanime.core",
+    "storageLocation": "/opt/core/qbittorrent",
+    "domain": "qbittorrent.core",
     "roleAssignments": {
       "alpha": "node-0",
       "beta": null,
@@ -104,12 +104,12 @@
     }
   },
   {
-    "id": "8_qBittorrent",
-    "name": "qBittorrent",
+    "id": "8_Seanime",
+    "name": "Seanime",
     "status": "unknown",
     "containerized": true,
-    "storageLocation": "/opt/core/qbittorrent",
-    "domain": "qbittorrent.core",
+    "storageLocation": "/opt/core/seanime",
+    "domain": "seanime.core",
     "roleAssignments": {
       "alpha": "node-0",
       "beta": null,

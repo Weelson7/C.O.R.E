@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 6 - C.O.R.E Seanime (seanime.core)
+# CONTROL_HEADER: Service 8 - C.O.R.E Seanime (seanime.core)
 
 # Containerized architecture contract alignment:
 # 1) dependency installation
@@ -40,6 +40,10 @@ HEALTH_DELAY_SECONDS="${HEALTH_DELAY_SECONDS:-2}"
 
 log() {
   echo "[core-seanime] $*"
+}
+
+warn() {
+  echo "[core-seanime] WARNING: $*" >&2
 }
 
 fail() {
@@ -195,10 +199,12 @@ services:
     environment:
       - TZ=\${TZ:-UTC}
       - LOG_LEVEL=info
+      - QBITTORRENT_API_ENDPOINT=http://core-qbittorrent:8080
     volumes:
       - ${DATA_DIR}:/data
       - ${CONFIG_DIR}:/config
       - ${MEDIA_LIBRARY_PATH}:/media/anime:ro
+      - /downloads:/downloads
     ports:
       - "127.0.0.1:${PUBLISHED_HTTP_PORT}:${CONTAINER_PORT}"
 EOF
@@ -395,6 +401,13 @@ if ! wait_for_ingress_health "${HEALTH_RETRIES}" "${HEALTH_DELAY_SECONDS}"; then
   sudo docker logs "${SERVICE_NAME}" || true
   sudo tail -20 /var/log/nginx/core-seanime.error.log || true
   fail "Ingress endpoint did not become healthy within timeout"
+fi
+
+log "Checking qBittorrent availability (non-critical)"
+if curl --silent --fail http://core-qbittorrent:8080/ >/dev/null 2>&1; then
+  log "qBittorrent is available for torrenting integration"
+else
+  warn "qBittorrent is not yet available; Seanime will operate without torrent download capability until qBittorrent (service 6) is deployed"
 fi
 
 log "Deployment complete"

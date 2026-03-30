@@ -25,33 +25,42 @@ fail() {
 }
 
 require_cmd() {
+  log "Checking for required command: $1"
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
 }
 
 resolve_netbird_bin() {
+  log "Resolving Netbird binary path"
   if command -v netbird >/dev/null 2>&1; then
+    log "Netbird binary found in PATH"
     NETBIRD_BIN="$(command -v netbird)"
   elif [ -x "/snap/bin/netbird" ]; then
+    log "Netbird binary found at /snap/bin/netbird"
     NETBIRD_BIN="/snap/bin/netbird"
   else
+    fail "Netbird binary not found in known locations"
     NETBIRD_BIN=""
   fi
 }
 
 install_netbird() {
+  log "Installing Netbird agent"
   if sudo apt install -y netbird; then
+    log "Netbird installed via apt"
     return 0
   fi
 
   log "Apt package 'netbird' unavailable; falling back to snap"
   if ! command -v snap >/dev/null 2>&1; then
+    log "Snap is not installed; installing snapd"
     sudo apt install -y snapd
   fi
-
+  log "Installing Netbird via snap"
   sudo snap install netbird
 }
 
 ensure_ubuntu() {
+  log "Ensuring operating system is Ubuntu"
   [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
 
   # shellcheck disable=SC1091
@@ -60,6 +69,7 @@ ensure_ubuntu() {
 }
 
 ensure_value() {
+  log "Ensuring required value for ${1}"
   local var_name="$1"
   local prompt="$2"
   local is_secret="${3:-false}"
@@ -78,12 +88,14 @@ ensure_value() {
 }
 
 is_netbird_connected() {
+  log "Checking if Netbird is currently connected"
   resolve_netbird_bin
   if [ -z "${NETBIRD_BIN}" ]; then
-    return 1
+    fail "Netbird binary not found; cannot check connection status"
   fi
 
   if sudo "${NETBIRD_BIN}" status 2>/dev/null | grep -qiE 'connected|management:[[:space:]]*connected'; then
+    log "Netbird is currently connected"
     return 0
   fi
 
@@ -95,10 +107,12 @@ cleanup_existing_netbird_runtime() {
 
   if command -v systemctl >/dev/null 2>&1; then
     sudo systemctl stop netbird.service netbird-ui.service >/dev/null 2>&1 || true
+    log "Stopped Netbird systemd services that were running"
   fi
 
   resolve_netbird_bin
   if [ -n "${NETBIRD_BIN}" ]; then
+    log "Stopping Netbird agent"
     sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
   fi
 

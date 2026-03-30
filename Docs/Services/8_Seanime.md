@@ -5,13 +5,14 @@
 - [Commands](#commands)
 - [Runtime parameters](#runtime-parameters)
 - [Deployment sequence](#deployment-sequence)
+- [qBittorrent Integration](#qbittorrent-integration)
 - [Files](#files)
 
 ## Infos
 - Operational status: Functional.
-- What it is: A containerized self-hosted anime library and tracking web service exposed through C.O.R.E Nginx ingress.
-- What it does: Provides anime browsing and tracking workflows from a single mesh-scoped endpoint with persistent data/config mounts.
-- Why this service exists in C.O.R.E: It replaces service slot 6 with a media-aligned workload while preserving Supervisor-managed role semantics and container portability.
+- What it is: A containerized self-hosted anime library and tracking web service with qBittorrent torrenting source integration, exposed through C.O.R.E Nginx ingress.
+- What it does: Provides anime browsing, tracking, and torrent download workflows from a single mesh-scoped endpoint with persistent data/config mounts and access to shared `/downloads` volume.
+- Why this service exists in C.O.R.E: It replaces service slot 8 with a media-aligned workload while preserving Supervisor-managed role semantics and container portability. Integrates with qBittorrent (service 6) for torrent downloads.
 
 ## Commands
 - Start: `sudo docker compose -f /opt/core/seanime/compose.yaml up -d`
@@ -19,7 +20,7 @@
 - Restart: `sudo docker compose -f /opt/core/seanime/compose.yaml up -d --force-recreate`
 - Status: `sudo docker compose -f /opt/core/seanime/compose.yaml ps` and `sudo docker inspect -f '{{.State.Status}}' core-seanime`
 - Logs: `sudo docker logs -f core-seanime` and `sudo tail -f /var/log/nginx/core-seanime.error.log`
-- Edit/Reload: edit `src/6_Seanime/deploy.sh`, rerun deploy script, then `sudo nginx -t ; sudo systemctl reload nginx`
+- Edit/Reload: edit `src/8_Seanime/deploy.sh`, rerun deploy script, then `sudo nginx -t ; sudo systemctl reload nginx`
 
 ## Runtime parameters
 - Node(s): Service roles are Supervisor-managed per [Architecture.md § 3.2](../Architecture.md#32-supervisor-bootstrap). By default the Supervisor node (node 0) is alpha; beta and gamma are optional per-service assignments.
@@ -30,6 +31,7 @@
 	- Persistent data: `/opt/core/seanime/data`
 	- Persistent config: `/opt/core/seanime/config`
 	- Media mount: `${MEDIA_LIBRARY_PATH}` to `/media/anime` (read-only)
+	- Downloads mount: `/downloads` (shared with qBittorrent service 6)
 	- Nginx site: `/etc/nginx/sites-available/seanime.core`
 	- TLS assets: `/etc/nginx/ssl/seanime.core.crt` and `/etc/nginx/ssl/seanime.core.key`
 	- Auth file: `/etc/nginx/.htpasswd_core`
@@ -40,6 +42,7 @@
 	- `CONTAINER_PORT` (optional, default `4321`): Seanime container service port.
 	- `MEDIA_LIBRARY_PATH` (optional, default `/srv/media/anime`): host path mounted read-only at `/media/anime`.
 	- `IMAGE_TAG` (optional): container image tag, default `docker.io/umagistr/seanime:latest`.
+	- `QBITTORRENT_API_ENDPOINT` (auto-configured): set to `http://core-qbittorrent:8080` for qBittorrent container-to-container communication.
 - Security constraints:
 	- Script is Ubuntu-only and exits when host OS is not Ubuntu.
 	- Mesh-only administrative surface expected by policy per [Architecture.md § 8.1](../Architecture.md#81-access-model).
@@ -77,7 +80,7 @@ Failure handling notes:
 - Library mount errors: verify `MEDIA_LIBRARY_PATH` exists, is readable, and contains anime media files.
 
 ## Files
-- `src/6_Seanime/deploy.sh`: Idempotent deployment script implementing C.O.R.E deployment contract for Seanime.
-- `src/6_Seanime/wipe.sh`: Removal script for runtime artifacts, ingress config, and optional package purge.
+- `src/8_Seanime/deploy.sh`: Idempotent deployment script implementing C.O.R.E deployment contract for Seanime.
+- `src/8_Seanime/wipe.sh`: Removal script for runtime artifacts, ingress config, and optional package purge.
 - `/opt/core/seanime/compose.yaml`: Generated container orchestration definition.
 - `/etc/nginx/sites-available/seanime.core`: Ingress virtual host definition for the service.

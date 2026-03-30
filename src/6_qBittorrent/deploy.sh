@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 8 - C.O.R.E qBittorrent (qbittorrent-nox WebUI, qbittorrent.core)
+# CONTROL_HEADER: Service 6 - C.O.R.E qBittorrent (qbittorrent-nox WebUI, qbittorrent.core)
 
 # Containerized architecture contract alignment:
 # 1) dependency installation

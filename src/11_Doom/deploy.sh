@@ -23,6 +23,17 @@ done
 
 OWNER_USER="${SUDO_USER:-$(id -un)}"
 
+cleanup_previous_runtime() {
+	echo "[pre] Cleaning previous DOOM runtime artifacts..."
+
+	sudo rm -rf "${WEB_ROOT}"
+	sudo rm -f "${NGINX_SITE_FILE}" "/etc/nginx/sites-enabled/${DOMAIN}"
+	sudo rm -f "${NGINX_SSL_DIR}/doom.crt" "${NGINX_SSL_DIR}/doom.key"
+	sudo rm -f /var/log/nginx/doom.access.log /var/log/nginx/doom.error.log
+}
+
+cleanup_previous_runtime
+
 echo "[1/6] Updating system and installing dependencies..."
 sudo apt update -y
 sudo apt install -y \
