@@ -156,6 +156,8 @@ cleanup_previous_runtime() {
 
   if [ -f "${COMPOSE_FILE}" ]; then
     "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+    log "Removing old compose file to ensure clean deployment: ${COMPOSE_FILE}"
+    sudo rm -f "${COMPOSE_FILE}" || true
   fi
 
   while IFS= read -r id; do
