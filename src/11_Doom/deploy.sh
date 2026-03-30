@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Extra 4 - DOOM WASM (doom.zenith.su)
+# CONTROL_HEADER: Extra 4 - DOOM WASM (doom.core)
 
 # Required runtime input:
 # - NETBIRD_DEVICE_IP: expected NetBird-routed IP of this service for DNS validation
 
-DOMAIN="doom.zenith.su"
-DOMAIN_CERT_NAME="doom.zenith.su"
+DOMAIN="doom.core"
+DOMAIN_CERT_NAME="${DOMAIN}"
 NGINX_SSL_DIR="/etc/nginx/ssl"
-NGINX_SITE_FILE="/etc/nginx/sites-available/doom.zenith.su"
+NGINX_SITE_FILE="/etc/nginx/sites-available/${DOMAIN}"
 WEB_ROOT="/var/www/doom"
 DOOM_SRC_DIR="${WEB_ROOT}/src"
 DOOM_WAD="${DOOM_SRC_DIR}/doom1.wad"
@@ -130,7 +130,7 @@ server {
 }
 EOF
 
-sudo ln -sf "${NGINX_SITE_FILE}" /etc/nginx/sites-enabled/doom.zenith.su
+sudo ln -sf "${NGINX_SITE_FILE}" "/etc/nginx/sites-enabled/${DOMAIN}"
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl enable nginx
