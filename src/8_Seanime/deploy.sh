@@ -19,7 +19,7 @@ COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-docker.io/umagistr/seanime:latest}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-14321}"
-CONTAINER_PORT="${CONTAINER_PORT:-43211}"
+CONTAINER_PORT="${CONTAINER_PORT:-4321}"
 MEDIA_LIBRARY_PATH="${MEDIA_LIBRARY_PATH:-/srv/media/anime}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
@@ -187,6 +187,15 @@ ensure_media_library_path() {
   [ -r "${path}" ] || fail "MEDIA_LIBRARY_PATH is not readable: ${path}"
 }
 
+ensure_downloads_dir() {
+  local downloads_dir="/downloads"
+  
+  if [ ! -d "${downloads_dir}" ]; then
+    log "Creating shared downloads directory: ${downloads_dir}"
+    sudo mkdir -p "${downloads_dir}" || fail "Failed to create ${downloads_dir}"
+  fi
+}
+
 write_compose_file() {
   local target="$1"
 
@@ -316,6 +325,7 @@ require_cmd ss
 ensure_numeric_port "${PUBLISHED_HTTP_PORT}"
 ensure_numeric_port "${CONTAINER_PORT}"
 ensure_media_library_path "${MEDIA_LIBRARY_PATH}"
+ensure_downloads_dir
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
@@ -404,7 +414,7 @@ if ! wait_for_ingress_health "${HEALTH_RETRIES}" "${HEALTH_DELAY_SECONDS}"; then
 fi
 
 log "Checking qBittorrent availability (non-critical)"
-if curl --silent --fail http://core-qbittorrent:8080/ >/dev/null 2>&1; then
+if sudo docker exec "${SERVICE_NAME}" curl --silent --fail http://core-qbittorrent:8080/ >/dev/null 2>&1; then
   log "qBittorrent is available for torrenting integration"
 else
   warn "qBittorrent is not yet available; Seanime will operate without torrent download capability until qBittorrent (service 6) is deployed"
