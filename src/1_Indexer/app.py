@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
