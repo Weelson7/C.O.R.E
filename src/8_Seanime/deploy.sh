@@ -210,14 +210,23 @@ services:
     environment:
       - TZ=\${TZ:-UTC}
       - LOG_LEVEL=info
+      - SEANIME_SERVER_HOST=0.0.0.0
+      - SEANIME_SERVER_PORT=${CONTAINER_PORT}
       - QBITTORRENT_API_ENDPOINT=http://core-qbittorrent:8080
     volumes:
       - ${DATA_DIR}:/data
-      - ${CONFIG_DIR}:/config
+      - ${CONFIG_DIR}:/root/.config/Seanime
       - ${MEDIA_LIBRARY_PATH}:/media/anime:ro
       - /downloads:/downloads
     ports:
       - "127.0.0.1:${PUBLISHED_HTTP_PORT}:${CONTAINER_PORT}"
+    networks:
+      - core_network
+
+networks:
+  core_network:
+    external: true
+    name: ${CORE_NETWORK}
 EOF
 }
 
@@ -289,7 +298,9 @@ wait_for_local_health() {
   local retries="${1:-40}"
   local delay="${2:-2}"
   local i
-  local health_url="http://127.0.0.1:${PUBLISHED_HTTP_PORT}/"
+  # FIXED: use /api/v1/status instead of / — root path may redirect or return
+  # non-2xx before the UI is fully initialised; the API endpoint is reliable.
+  local health_url="http://127.0.0.1:${PUBLISHED_HTTP_PORT}/api/v1/status"
 
   for i in $(seq 1 "${retries}"); do
     if curl --silent --show-error --fail "${health_url}" >/dev/null 2>&1; then
