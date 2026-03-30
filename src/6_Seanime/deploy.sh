@@ -149,31 +149,13 @@ assert_host_port_available() {
 ensure_media_library_path() {
   local path="$1"
 
-  while true; do
-    if [ -d "${path}" ] && [ -r "${path}" ]; then
-      printf -v MEDIA_LIBRARY_PATH '%s' "${path}"
-      return 0
-    fi
+  if [ ! -e "${path}" ]; then
+    log "MEDIA_LIBRARY_PATH missing; creating directory: ${path}"
+    sudo mkdir -p "${path}" || fail "Failed to create MEDIA_LIBRARY_PATH directory: ${path}"
+  fi
 
-    # In non-interactive mode, fail fast with explicit remediation guidance.
-    if [ ! -t 0 ]; then
-      if [ ! -d "${path}" ]; then
-        fail "MEDIA_LIBRARY_PATH does not exist or is not a directory: ${path}. Set MEDIA_LIBRARY_PATH to a valid anime library directory and rerun."
-      fi
-      fail "MEDIA_LIBRARY_PATH is not readable: ${path}. Grant read permission or set MEDIA_LIBRARY_PATH to a readable directory and rerun."
-    fi
-
-    if [ ! -d "${path}" ]; then
-      log "MEDIA_LIBRARY_PATH does not exist or is not a directory: ${path}"
-    else
-      log "MEDIA_LIBRARY_PATH is not readable: ${path}"
-    fi
-
-    read -r -p "Enter MEDIA_LIBRARY_PATH [${path}]: " entered_path
-    if [ -n "${entered_path}" ]; then
-      path="${entered_path}"
-    fi
-  done
+  [ -d "${path}" ] || fail "MEDIA_LIBRARY_PATH exists but is not a directory: ${path}"
+  [ -r "${path}" ] || fail "MEDIA_LIBRARY_PATH is not readable: ${path}"
 }
 
 write_compose_file() {
