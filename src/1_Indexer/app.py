@@ -302,6 +302,17 @@ SERVICE_CATALOG = [
         "wip": False,
     },
     {
+        "name": "Music Assistant",
+        "domain": "music.core",
+        "description": "Self-hosted music library and playback control",
+        "node": "node-0",
+        "role": "alpha",
+        "status": "online",
+        "tag": "media",
+        "ingressPath": "supervisor",
+        "wip": False,
+    },
+    {
         "name": "Supervisor",
         "domain": "supervisor.core",
         "description": "Cluster orchestration control surface",

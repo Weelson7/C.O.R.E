@@ -182,6 +182,19 @@
     }
   },
   {
+    "id": "14_Music-assistant",
+    "name": "Music Assistant",
+    "status": "unknown",
+    "containerized": true,
+    "storageLocation": "/opt/core/music-assistant",
+    "domain": "music.core",
+    "roleAssignments": {
+      "alpha": "node-0",
+      "beta": null,
+      "gamma": null
+    }
+  },
+  {
     "id": "x_Supervisor",
     "name": "Supervisor",
     "status": "healthy",
