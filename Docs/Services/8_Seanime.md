@@ -25,7 +25,7 @@
 ## Runtime parameters
 - Node(s): Service roles are Supervisor-managed per [Architecture.md § 3.2](../Architecture.md#32-supervisor-bootstrap). By default the Supervisor node (node 0) is alpha; beta and gamma are optional per-service assignments.
 - Domain: `seanime.core`
-- Port(s): External `443` (TLS) and `80` (redirect), internal HTTP loopback `127.0.0.1:14321` mapped to container `4321`.
+- Port(s): External `443` (TLS) and `80` (redirect), internal HTTP loopback `127.0.0.1:14321` mapped to container `43211`.
 - Volumes/Data path:
 	- Container runtime context: `/opt/core/seanime`
 	- Persistent data: `/opt/core/seanime/data`
@@ -39,7 +39,7 @@
 	- `NETBIRD_DEVICE_IP` (required): expected mesh IP for DNS contract check.
 	- `HTPASSWD_USER` (required): HTTP Basic Auth account to create/update.
 	- `PUBLISHED_HTTP_PORT` (optional, default `14321`): host loopback port exposed to Nginx.
-	- `CONTAINER_PORT` (optional, default `4321`): Seanime container service port.
+	- `CONTAINER_PORT` (optional, default `43211`): Seanime container service port.
 	- `MEDIA_LIBRARY_PATH` (optional, default `/srv/media/anime`): host path mounted read-only at `/media/anime`.
 	- `IMAGE_TAG` (optional): container image tag, default `docker.io/umagistr/seanime:latest`.
 	- `QBITTORRENT_API_ENDPOINT` (auto-configured): set to `http://core-qbittorrent:8080` for qBittorrent container-to-container communication.
@@ -78,6 +78,13 @@ Failure handling notes:
 - Nginx validation failure: inspect `/var/log/nginx/core-seanime.error.log`, fix config, rerun `sudo nginx -t`.
 - DNS mismatch/unresolved: correct AdGuard rewrite and Netbird nameserver group so `seanime.core` resolves to expected mesh IP.
 - Library mount errors: verify `MEDIA_LIBRARY_PATH` exists, is readable, and contains anime media files.
+
+## qBittorrent Integration
+Seanime integrates with qBittorrent (service 6) as the torrenting source for anime downloads:
+- Seanime connects to qBittorrent via `http://core-qbittorrent:8080` (container-to-container DNS)
+- Both services share `/downloads` volume for torrent completion and media files
+- If qBittorrent is not deployed, Seanime operates normally but torrent searches return no results
+- Health checks are soft: deployment succeeds even if qBittorrent is unavailable
 
 ## Files
 - `src/8_Seanime/deploy.sh`: Idempotent deployment script implementing C.O.R.E deployment contract for Seanime.

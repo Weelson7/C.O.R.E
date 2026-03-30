@@ -18,7 +18,7 @@ CONFIG_DIR="${INSTALL_DIR}/config"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-docker.io/umagistr/seanime:latest}"
-PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-43211}"
+PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-14321}"
 CONTAINER_PORT="${CONTAINER_PORT:-43211}"
 MEDIA_LIBRARY_PATH="${MEDIA_LIBRARY_PATH:-/srv/media/anime}"
 
@@ -289,14 +289,20 @@ wait_for_local_health() {
   local retries="${1:-40}"
   local delay="${2:-2}"
   local i
+  local health_url="http://127.0.0.1:${PUBLISHED_HTTP_PORT}/"
 
   for i in $(seq 1 "${retries}"); do
-    if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" >/dev/null; then
+    if curl --silent --show-error --fail "${health_url}" >/dev/null 2>&1; then
+      log "Local health check passed on attempt ${i}/${retries}"
       return 0
+    fi
+    if [ "$i" -eq 1 ] || [ $((i % 10)) -eq 0 ]; then
+      log "Health check attempt ${i}/${retries}: waiting for ${health_url} to respond..."
     fi
     sleep "${delay}"
   done
 
+  log "Local health check exhausted all ${retries} attempts (${retries}x${delay}s)"
   return 1
 }
 
@@ -304,16 +310,22 @@ wait_for_ingress_health() {
   local retries="${1:-40}"
   local delay="${2:-2}"
   local i
+  local ingress_url="https://${DOMAIN}/"
 
   for i in $(seq 1 "${retries}"); do
     if curl --silent --show-error --fail --insecure \
       -u "${HTPASSWD_USER}:${HTPASSWD_PASSWORD}" \
-      "https://${DOMAIN}/" >/dev/null; then
+      "${ingress_url}" >/dev/null 2>&1; then
+      log "Ingress health check passed on attempt ${i}/${retries}"
       return 0
+    fi
+    if [ "$i" -eq 1 ] || [ $((i % 10)) -eq 0 ]; then
+      log "Ingress check attempt ${i}/${retries}: waiting for ${ingress_url} to respond..."
     fi
     sleep "${delay}"
   done
 
+  log "Ingress health check exhausted all ${retries} attempts (${retries}x${delay}s)"
   return 1
 }
 
