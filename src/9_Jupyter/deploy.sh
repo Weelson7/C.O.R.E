@@ -25,9 +25,8 @@ PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-18888}"
 CONTAINER_PORT="${CONTAINER_PORT:-8888}"
 JUPYTER_LAB_ROOT_DIR="${JUPYTER_LAB_ROOT_DIR:-/home/jovyan/work}"
 JUPYTER_TOKEN="${JUPYTER_TOKEN:-}"
+JUPYTER_PASSWORD="${JUPYTER_PASSWORD:-}"
 JUPYTER_EXTRA_ARGS="${JUPYTER_EXTRA_ARGS:-}"
-PUID="${PUID:-1000}"
-PGID="${PGID:-100}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
 NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"
@@ -183,6 +182,19 @@ wait_for_local_health() {
 }
 
 write_compose_file() {
+  local jupyter_auth_args=""
+  
+  if [ -n "${JUPYTER_PASSWORD}" ]; then
+    # Generate password hash for Jupyter
+    jupyter_auth_args="--NotebookApp.password='${JUPYTER_PASSWORD}'"
+  elif [ -n "${JUPYTER_TOKEN}" ]; then
+    # Use token-based auth (default)
+    jupyter_auth_args="--ServerApp.token='${JUPYTER_TOKEN}'"
+  else
+    # No auth - generate random token
+    jupyter_auth_args=""
+  fi
+
   sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
   jupyter:
@@ -191,7 +203,6 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ:-UTC}
-      - JUPYTER_TOKEN=${JUPYTER_TOKEN}
       - JUPYTER_ENABLE_LAB=yes
     command: >-
       start-notebook.py
@@ -201,6 +212,7 @@ services:
       --ServerApp.allow_remote_access=True
       --ServerApp.trust_xheaders=True
       --ServerApp.disable_check_xsrf=False
+      ${jupyter_auth_args}
       ${JUPYTER_EXTRA_ARGS}
     volumes:
       - ${WORK_DIR}:${JUPYTER_LAB_ROOT_DIR}
@@ -316,13 +328,6 @@ sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
 
 log "[8/9] Writing and validating Nginx ingress for ${DOMAIN}"
-if [ ! -f "${HTPASSWD_FILE}" ]; then
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i -c "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-else
-  printf '%s\n' "${HTPASSWD_PASSWORD}" | sudo htpasswd -i "${HTPASSWD_FILE}" "${HTPASSWD_USER}"
-fi
-sudo chmod 640 "${HTPASSWD_FILE}"
-
 write_nginx_site
 
 sudo ln -sf "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
@@ -346,5 +351,15 @@ curl --silent --show-error --fail --insecure "https://${DOMAIN}/api" >/dev/null 
 echo
 log "Deployment complete and container runtime checks passed"
 log "URL: https://${DOMAIN}"
+log ""
+if [ -n "${JUPYTER_TOKEN}" ]; then
+  log "Jupyter Token: ${JUPYTER_TOKEN}"
+elif [ -n "${JUPYTER_PASSWORD}" ]; then
+  log "Jupyter authentication: Password-based (configured)"
+else
+  log "Jupyter Token: Check container logs for auto-generated token"
+  log "  sudo docker logs ${SERVICE_NAME} 2>&1 | grep -E 'token=|password='"
+fi
+log ""
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
 log "Compose stack: ${COMPOSE_CMD[*]} -f ${COMPOSE_FILE} ps"
