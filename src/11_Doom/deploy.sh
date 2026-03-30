@@ -27,7 +27,7 @@ echo "[1/6] Updating system and installing dependencies..."
 sudo apt update -y
 sudo apt install -y \
 	nginx mkcert nginx-extras curl ca-certificates git wget \
-	build-essential make automake autoconf \
+	build-essential make automake autoconf libtool pkg-config \
 	python3 xz-utils
 
 echo "[2/6] Preparing cloudflare/doom-wasm under ${WEB_ROOT} and building with emsdk ${EMSDK_VERSION}..."
@@ -58,8 +58,24 @@ sudo -u "${OWNER_USER}" -H bash -lc "
 	if [ ! -s '${DOOM_WAD}' ]; then
 		wget -q -O '${DOOM_WAD}' '${WAD_URL}'
 	fi
-	./scripts/clean.sh
-	./scripts/build.sh
+	if [ -f Makefile ]; then
+		emmake make clean || true
+	fi
+	autoreconf -fiv
+	EM_HOST=\"\$(emcc -dumpmachine 2>/dev/null || true)\"
+	if [ -z \"\${EM_HOST}\" ]; then
+		EM_HOST='none-none-none'
+	fi
+	if ! ac_cv_exeext='.html' emconfigure ./configure --host=\"\${EM_HOST}\"; then
+		if [ \"\${EM_HOST}\" != 'none-none-none' ]; then
+			echo 'Configure with emcc host failed, retrying legacy host none-none-none...'
+			ac_cv_exeext='.html' emconfigure ./configure --host='none-none-none'
+		else
+			echo 'Configure failed for host none-none-none.'
+			exit 1
+		fi
+	fi
+	emmake make -j\"\$(nproc)\"
 "
 
 echo "[3/6] Creating self-signed certificate for ${DOMAIN}..."

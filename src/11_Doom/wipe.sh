@@ -69,7 +69,8 @@ if [ "${PURGE_PACKAGES}" = "true" ]; then
   log "Purging packages installed by deploy.sh"
   sudo apt purge -y \
     nginx mkcert nginx-extras curl ca-certificates git wget \
-    build-essential make automake autoconf python3 xz-utils || true
+    build-essential make automake autoconf libtool pkg-config \
+    python3 xz-utils || true
   sudo apt autoremove -y || true
   sudo apt clean || true
 else
