@@ -24,8 +24,6 @@ BUILD_IMAGE="${BUILD_IMAGE:-true}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-18888}"
 CONTAINER_PORT="${CONTAINER_PORT:-8888}"
 JUPYTER_LAB_ROOT_DIR="${JUPYTER_LAB_ROOT_DIR:-/home/jovyan/work}"
-JUPYTER_TOKEN="${JUPYTER_TOKEN:-}"
-JUPYTER_PASSWORD="${JUPYTER_PASSWORD:-}"
 JUPYTER_EXTRA_ARGS="${JUPYTER_EXTRA_ARGS:-}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
@@ -182,19 +180,6 @@ wait_for_local_health() {
 }
 
 write_compose_file() {
-  local jupyter_auth_args=""
-  
-  if [ -n "${JUPYTER_PASSWORD}" ]; then
-    # Generate password hash for Jupyter
-    jupyter_auth_args="--NotebookApp.password='${JUPYTER_PASSWORD}'"
-  elif [ -n "${JUPYTER_TOKEN}" ]; then
-    # Use token-based auth (default)
-    jupyter_auth_args="--ServerApp.token='${JUPYTER_TOKEN}'"
-  else
-    # No auth - generate random token
-    jupyter_auth_args=""
-  fi
-
   sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
   jupyter:
@@ -202,17 +187,19 @@ services:
     image: ${IMAGE_TAG}
     restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
       - JUPYTER_ENABLE_LAB=yes
     command: >-
       start-notebook.py
+      --NotebookApp.token=''
+      --NotebookApp.password=''
+      --ServerApp.token=''
+      --ServerApp.password=''
+      --ServerApp.disable_check_xsrf=True
       --ServerApp.ip=0.0.0.0
       --ServerApp.port=${CONTAINER_PORT}
       --ServerApp.root_dir=${JUPYTER_LAB_ROOT_DIR}
       --ServerApp.allow_remote_access=True
       --ServerApp.trust_xheaders=True
-      --ServerApp.disable_check_xsrf=False
-      ${jupyter_auth_args}
       ${JUPYTER_EXTRA_ARGS}
     volumes:
       - ${WORK_DIR}:${JUPYTER_LAB_ROOT_DIR}
@@ -345,21 +332,13 @@ resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' 
 [ -n "${resolved_ip}" ] || fail "DNS lookup failed for ${DOMAIN}; configure AdGuard rewrite and Netbird nameserver group"
 validate_resolved_ip "${resolved_ip}"
 
-curl --silent --show-error --fail --insecure "https://${DOMAIN}/api" >/dev/null \
-  || fail "Ingress health check failed for https://${DOMAIN}/api"
+curl --silent --show-error --fail --insecure "https://${DOMAIN}/" >/dev/null \
+  || fail "Ingress health check failed for https://${DOMAIN}/"
 
 echo
 log "Deployment complete and container runtime checks passed"
 log "URL: https://${DOMAIN}"
-log ""
-if [ -n "${JUPYTER_TOKEN}" ]; then
-  log "Jupyter Token: ${JUPYTER_TOKEN}"
-elif [ -n "${JUPYTER_PASSWORD}" ]; then
-  log "Jupyter authentication: Password-based (configured)"
-else
-  log "Jupyter Token: Check container logs for auto-generated token"
-  log "  sudo docker logs ${SERVICE_NAME} 2>&1 | grep -E 'token=|password='"
-fi
+log "Authentication: DISABLED (no token or password required)"
 log ""
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"
 log "Compose stack: ${COMPOSE_CMD[*]} -f ${COMPOSE_FILE} ps"
