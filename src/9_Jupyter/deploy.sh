@@ -145,6 +145,32 @@ assert_host_port_available() {
   fi
 }
 
+cleanup_previous_runtime() {
+  local ids=()
+  local id
+
+  if [ -f "${COMPOSE_FILE}" ]; then
+    log "Stopping existing stack before conflict checks"
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$")
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+  if [ "${#ids[@]}" -gt 0 ]; then
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+    log "Removing existing Jupyter container workload (${#ids[@]} container(s))"
+    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 validate_resolved_ip() {
   local resolved_ip="$1"
 
@@ -274,12 +300,7 @@ log "[2/9] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}" "${WORK_DIR}" "${CONFIG_DIR}"
 # Fix ownership so jovyan user (1000:100) can write to these directories
 sudo chown -R 1000:100 "${WORK_DIR}" "${CONFIG_DIR}"
-
-if [ -f "${COMPOSE_FILE}" ]; then
-  log "Stopping existing stack before conflict checks"
-  "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-fi
-sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+cleanup_previous_runtime
 
 log "[3/9] Building custom Jupyter image with Java and C++ kernels"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

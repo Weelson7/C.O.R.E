@@ -8,9 +8,28 @@ INSTALL_DIR="/opt/core/adguard"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 FORCE="${FORCE:-false}"
 PURGE_PACKAGES="${PURGE_PACKAGES:-true}"
+COMPOSE_CMD=()
 
 log() {
   echo "[core-adguard:wipe] $*"
+}
+
+resolve_compose_cmd() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if sudo docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker-compose)
+    return 0
+  fi
+
+  return 1
 }
 
 confirm() {
@@ -45,10 +64,21 @@ ensure_ubuntu
 
 log "Stopping container workload"
 if command -v docker >/dev/null 2>&1; then
-  if [ -f "${COMPOSE_FILE}" ]; then
-    sudo docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  if resolve_compose_cmd && [ -f "${COMPOSE_FILE}" ]; then
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
   fi
-  sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+
+  mapfile -t container_ids < <(
+    {
+      sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$"
+      sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}"
+    } | awk 'NF && !seen[$1]++'
+  )
+
+  if [ "${#container_ids[@]}" -gt 0 ]; then
+    sudo docker rm -f "${container_ids[@]}" >/dev/null 2>&1 || true
+  fi
+
   sudo docker image rm -f "${IMAGE_TAG}" >/dev/null 2>&1 || true
 fi
 

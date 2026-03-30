@@ -104,9 +104,24 @@ ensure_workdir_exists() {
 normalize_ttyd_extra_args() {
   local cleaned
 
-  cleaned="$(printf '%s' "${TTYD_EXTRA_ARGS}" | sed -E 's/(^|[[:space:]])(--readonly|-R|--writable|-W)([[:space:]]|$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  # Remove policy-conflicting flags from custom args so deploy-managed values
+  # (interface/port/cwd/max-clients/writable mode) stay authoritative.
+  cleaned="$(printf '%s' "${TTYD_EXTRA_ARGS}" | sed -E '
+    s/(^|[[:space:]])(--readonly|-R|--writable|-W)([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--port|-p)([[:space:]]+[^[:space:]]+)?([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--port=[^[:space:]]+)([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--interface|-i)([[:space:]]+[^[:space:]]+)?([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--interface=[^[:space:]]+)([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--cwd)([[:space:]]+[^[:space:]]+)?([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--cwd=[^[:space:]]+)([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--max-clients|-m)([[:space:]]+[^[:space:]]+)?([[:space:]]|$)/ /g;
+    s/(^|[[:space:]])(--max-clients=[^[:space:]]+)([[:space:]]|$)/ /g;
+    s/[[:space:]]+/ /g;
+    s/^ //;
+    s/ $//
+  ')"
   if [ "${cleaned}" != "${TTYD_EXTRA_ARGS}" ]; then
-    log "Sanitized TTYD_EXTRA_ARGS by removing writable/readonly flags to enforce deploy policy"
+    log "Sanitized TTYD_EXTRA_ARGS by removing flags managed by deploy policy"
   fi
 
   TTYD_EXTRA_ARGS="${cleaned}"
@@ -184,6 +199,21 @@ resolve_ttyd_bin() {
   else
     TTYD_BIN=""
   fi
+}
+
+cleanup_previous_runtime() {
+  log "Cleaning up previous ttyd runtime"
+
+  sudo systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  sudo systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  sudo systemctl reset-failed "${SERVICE_NAME}" >/dev/null 2>&1 || true
+
+  if [ -f "${SYSTEMD_UNIT_FILE}" ]; then
+    sudo rm -f "${SYSTEMD_UNIT_FILE}"
+    sudo systemctl daemon-reload
+  fi
+
+  sudo rm -rf "${INSTALL_DIR}"
 }
 
 install_ttyd_with_snap() {
@@ -289,6 +319,9 @@ ensure_workdir_exists
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
 ensure_value HTPASSWD_USER "Enter HTTP Basic Auth username for ${DOMAIN}"
 ensure_secret_value HTPASSWD_PASSWORD "Enter HTTP Basic Auth password for ${HTPASSWD_USER}"
+
+log "[pre] Cleaning previous runtime artifacts"
+cleanup_previous_runtime
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y

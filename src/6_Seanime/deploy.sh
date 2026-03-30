@@ -146,6 +146,31 @@ assert_host_port_available() {
   fi
 }
 
+cleanup_previous_runtime() {
+  local ids=()
+  local id
+
+  if [ -f "${COMPOSE_FILE}" ]; then
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$")
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+  if [ "${#ids[@]}" -gt 0 ]; then
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+    log "Removing existing Seanime container workload (${#ids[@]} container(s))"
+    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 ensure_media_library_path() {
   local path="$1"
 
@@ -284,7 +309,6 @@ require_cmd ss
 
 ensure_numeric_port "${PUBLISHED_HTTP_PORT}"
 ensure_numeric_port "${CONTAINER_PORT}"
-assert_host_port_available "${PUBLISHED_HTTP_PORT}"
 ensure_media_library_path "${MEDIA_LIBRARY_PATH}"
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
@@ -305,6 +329,12 @@ resolve_compose_cmd
 
 sudo systemctl enable docker
 sudo systemctl restart docker
+
+log "[pre] Cleaning up previous Seanime runtime"
+cleanup_previous_runtime
+
+log "[pre] Enforcing no-port-conflict policy"
+assert_host_port_available "${PUBLISHED_HTTP_PORT}"
 
 log "[2/8] Provisioning TLS material for ${DOMAIN}"
 mkcert -install

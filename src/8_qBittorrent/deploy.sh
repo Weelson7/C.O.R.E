@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 8 - C.O.R.E qBittorrent (qbittorrent.core)
+# CONTROL_HEADER: Service 8 - C.O.R.E qBittorrent (qbittorrent-nox WebUI, qbittorrent.core)
 
 # Containerized architecture contract alignment:
 # 1) dependency installation
@@ -21,6 +21,7 @@ WATCH_DIR="${DOWNLOADS_DIR}/watch"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-lscr.io/linuxserver/qbittorrent:latest}"
+WEBUI_RUNTIME="${WEBUI_RUNTIME:-qbittorrent-nox}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-18081}"
 CONTAINER_WEBUI_PORT="${CONTAINER_WEBUI_PORT:-8080}"
 PUBLISHED_TORRENT_TCP_PORT="${PUBLISHED_TORRENT_TCP_PORT:-6881}"
@@ -158,6 +159,9 @@ services:
     container_name: ${SERVICE_NAME}
     image: ${IMAGE_TAG}
     restart: unless-stopped
+    labels:
+      - core.webui=qbittorrent
+      - core.webui.runtime=${WEBUI_RUNTIME}
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -222,6 +226,11 @@ require_cmd getent
 require_cmd awk
 
 ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
+
+case "${WEBUI_RUNTIME}" in
+  qbittorrent|qbittorrent-nox) ;;
+  *) fail "WEBUI_RUNTIME must be either qbittorrent or qbittorrent-nox (got: ${WEBUI_RUNTIME})" ;;
+esac
 
 log "[1/8] Installing deployment dependencies"
 sudo apt update -y
@@ -309,6 +318,7 @@ esac
 echo
 log "Deployment complete and container runtime checks passed"
 log "URL: https://${DOMAIN}"
+log "WebUI runtime profile: ${WEBUI_RUNTIME}"
 log "First-run WebUI credentials are managed by qBittorrent. If needed, check logs for the temporary password:"
 log "sudo docker logs ${SERVICE_NAME} | grep -i password"
 log "Container logs: sudo docker logs -f ${SERVICE_NAME}"

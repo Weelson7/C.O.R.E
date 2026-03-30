@@ -9,7 +9,7 @@
 
 ## Infos
 - What it is: A containerized qBittorrent deployment exposed through C.O.R.E mesh ingress.
-- What it does: Serves the qBittorrent WebUI via `qbittorrent.core` over Nginx TLS while running torrent traffic on dedicated TCP/UDP ports.
+- What it does: Serves the qBittorrent WebUI (qbittorrent-nox/headless runtime profile) via `qbittorrent.core` over Nginx TLS while running torrent traffic on dedicated TCP/UDP ports.
 - Why this service exists in C.O.R.E: It provides a private, mesh-scoped download client that integrates with the automation stack (*arr services) using shared download paths.
 
 ## Commands
@@ -41,6 +41,7 @@
 	- `NETBIRD_DEVICE_IP` (required): expected mesh IP for DNS contract check.
 	- `NETBIRD_FAILOVER_IP` (optional): accepted secondary IP for DNS validation.
 	- `IMAGE_TAG` (optional): container image tag, default `lscr.io/linuxserver/qbittorrent:latest`.
+	- `WEBUI_RUNTIME` (optional): WebUI runtime label, allowed values `qbittorrent` or `qbittorrent-nox`, default `qbittorrent-nox`.
 	- `DOWNLOADS_DIR` (optional): host path mounted at `/downloads`, default `/downloads`.
 	- `PUBLISHED_HTTP_PORT` (optional): local loopback WebUI port, default `18081`.
 	- `CONTAINER_WEBUI_PORT` (optional): internal qBittorrent WebUI port, default `8080`.

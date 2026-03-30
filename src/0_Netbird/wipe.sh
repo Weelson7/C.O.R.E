@@ -11,6 +11,16 @@ log() {
   echo "[core-netbird:wipe] $*"
 }
 
+stop_netbird_services() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  sudo systemctl stop netbird.service netbird-ui.service >/dev/null 2>&1 || true
+  sudo systemctl disable netbird.service netbird-ui.service >/dev/null 2>&1 || true
+  sudo systemctl reset-failed netbird.service netbird-ui.service >/dev/null 2>&1 || true
+}
+
 resolve_netbird_bin() {
   if command -v netbird >/dev/null 2>&1; then
     NETBIRD_BIN="$(command -v netbird)"
@@ -52,6 +62,7 @@ confirm
 ensure_ubuntu
 
 log "Stopping Netbird runtime if present"
+stop_netbird_services
 resolve_netbird_bin
 [ -n "${NETBIRD_BIN}" ] && sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
 
@@ -63,7 +74,7 @@ sudo rm -rf /etc/netbird /var/lib/netbird /var/log/netbird
 
 if [ "${PURGE_PACKAGES}" = "true" ]; then
   log "Purging packages installed by deploy.sh"
-  sudo apt purge -y netbird || true
+  sudo apt purge -y netbird netbird-ui || true
   if command -v snap >/dev/null 2>&1 && sudo snap list netbird >/dev/null 2>&1; then
     sudo snap remove netbird || true
   fi

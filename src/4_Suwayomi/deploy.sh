@@ -242,6 +242,31 @@ server {
 EOF
 }
 
+cleanup_previous_runtime() {
+  local ids=()
+  local id
+
+  if [ -f "${COMPOSE_FILE}" ]; then
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$")
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+  if [ "${#ids[@]}" -gt 0 ]; then
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+    log "Removing existing Suwayomi container workload (${#ids[@]} container(s))"
+    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 bootstrap_tachiyomi_extension() {
   local tmp_apk=""
   local extension_url_path=""
@@ -310,9 +335,8 @@ log "[3/9] Writing container runtime definition"
 write_compose_file
 write_server_conf
 
-log "[4/9] Stopping and removing any existing Suwayomi container"
-sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
-sudo docker rm -f "${SERVICE_NAME}" 2>/dev/null || true
+log "[4/9] Cleaning up existing Suwayomi runtime"
+cleanup_previous_runtime
 
 log "[5/9] Starting Suwayomi container (fresh)"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate --pull always

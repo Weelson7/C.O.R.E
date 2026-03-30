@@ -52,11 +52,13 @@ ensure_ubuntu
 log "Stopping ttyd runtime"
 sudo systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
 sudo systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+sudo systemctl reset-failed "${SERVICE_NAME}" >/dev/null 2>&1 || true
+sudo rm -f "/etc/systemd/system/multi-user.target.wants/${SERVICE_NAME}.service"
 
 if [ -f "${SYSTEMD_UNIT_FILE}" ]; then
   sudo rm -f "${SYSTEMD_UNIT_FILE}"
-  sudo systemctl daemon-reload
 fi
+sudo systemctl daemon-reload
 
 log "Removing filesystem and ingress artifacts"
 sudo rm -rf "${INSTALL_DIR}"
@@ -76,7 +78,8 @@ fi
 
 if command -v snap >/dev/null 2>&1 && sudo snap list ttyd >/dev/null 2>&1; then
   log "Removing snap package ttyd"
-  sudo snap remove ttyd || true
+  sudo snap remove ttyd --purge >/dev/null 2>&1 || sudo snap remove ttyd >/dev/null 2>&1 || true
+  sudo rm -rf /var/snap/ttyd
 fi
 
 if [ "${PURGE_PACKAGES}" = "true" ]; then

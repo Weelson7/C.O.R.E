@@ -90,6 +90,21 @@ is_netbird_connected() {
   return 1
 }
 
+cleanup_existing_netbird_runtime() {
+  log "Cleaning up existing Netbird runtime before re-enrollment"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl stop netbird.service netbird-ui.service >/dev/null 2>&1 || true
+  fi
+
+  resolve_netbird_bin
+  if [ -n "${NETBIRD_BIN}" ]; then
+    sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
+  fi
+
+  rm -f "${NETBIRD_STATUS_FILE}"
+}
+
 build_up_args() {
   local args=(up --setup-key "${NETBIRD_SETUP_KEY}")
 
@@ -129,7 +144,7 @@ fi
 
 log "[3/4] Registering node with Netbird network"
 mapfile -t NB_UP_ARGS < <(build_up_args)
-sudo "${NETBIRD_BIN}" down >/dev/null 2>&1 || true
+cleanup_existing_netbird_runtime
 sudo "${NETBIRD_BIN}" "${NB_UP_ARGS[@]}"
 
 log "[4/4] Verifying Netbird runtime status"

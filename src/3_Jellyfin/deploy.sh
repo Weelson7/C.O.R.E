@@ -224,6 +224,31 @@ server {
 EOF
 }
 
+cleanup_previous_runtime() {
+  local ids=()
+  local id
+
+  if [ -f "${COMPOSE_FILE}" ]; then
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$")
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+  if [ "${#ids[@]}" -gt 0 ]; then
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+    log "Removing existing Jellyfin container workload (${#ids[@]} container(s))"
+    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 ensure_ubuntu
 require_cmd sudo
 require_cmd apt
@@ -253,12 +278,7 @@ log "[3/8] Writing container runtime definition"
 write_compose_file
 
 log "[4/8] Starting Jellyfin container"
-# Stop and remove existing container if it exists
-if sudo docker ps -a --format '{{.Names}}' | grep -q "^${SERVICE_NAME}$"; then
-  log "Stopping and removing existing container ${SERVICE_NAME}"
-  sudo docker stop "${SERVICE_NAME}" 2>/dev/null || true
-  sudo docker rm "${SERVICE_NAME}" 2>/dev/null || true
-fi
+cleanup_previous_runtime
 
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
 

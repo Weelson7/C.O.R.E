@@ -355,12 +355,28 @@ sync_admin_panel_bind_from_config() {
 
 cleanup_previous_runtime() {
 	log "Cleaning previous AdGuard runtime artifacts"
+	local ids=()
+	local id
 
 	if [ -f "${COMPOSE_FILE}" ]; then
 		"${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
 	fi
 
-	sudo docker rm -f "${SERVICE_NAME}" >/dev/null 2>&1 || true
+	while IFS= read -r id; do
+		[ -n "${id}" ] || continue
+		ids+=("${id}")
+	done < <(sudo docker ps -aq --filter "name=^/${SERVICE_NAME}$")
+
+	while IFS= read -r id; do
+		[ -n "${id}" ] || continue
+		ids+=("${id}")
+	done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+	if [ "${#ids[@]}" -gt 0 ]; then
+		mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+		log "Removing existing AdGuard container workload (${#ids[@]} container(s))"
+		sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+	fi
 }
 
 wait_for_admin_panel_http() {

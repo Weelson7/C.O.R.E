@@ -143,9 +143,12 @@ if [ -f /opt/kasm/bin/stop ]; then
   sudo /opt/kasm/bin/stop || true
 fi
 
-# Remove all Kasm containers
-log "Removing old Kasm containers..."
-sudo docker ps -a --format '{{.Names}}' | grep -i kasm | xargs -r sudo docker rm -f 2>/dev/null || true
+# Remove all Kasm containers managed by official installer naming (kasmweb_*)
+log "Removing old Kasm containers (kasmweb_*)..."
+mapfile -t kasm_container_ids < <(sudo docker ps -aq --filter "name=^kasmweb_")
+if [ "${#kasm_container_ids[@]}" -gt 0 ]; then
+  sudo docker rm -f "${kasm_container_ids[@]}" >/dev/null 2>&1 || true
+fi
 
 # Wait a moment for ports to be freed
 sleep 3
