@@ -442,12 +442,11 @@ services:
       dockerfile: Dockerfile
     image: ${IMAGE_TAG}
     restart: unless-stopped
+    network_mode: host
     environment:
       - PORT=${API_PORT}
       - FLASK_ENV=production
       - PYTHONUNBUFFERED=1
-    ports:
-      - "127.0.0.1:${API_PORT}:${API_PORT}"
 EOF
 log "Docker Compose file written to ${COMPOSE_FILE}"
 
