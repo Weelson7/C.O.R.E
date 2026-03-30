@@ -46,26 +46,37 @@ else
 	sudo git -C "${EMSDK_DIR}" pull --ff-only
 fi
 
-sudo "${EMSDK_DIR}/emsdk" install "${EMSDK_VERSION}"
-sudo "${EMSDK_DIR}/emsdk" activate --embedded "${EMSDK_VERSION}"
+if sudo "${EMSDK_DIR}/emsdk" list --installed 2>/dev/null | grep -q "${EMSDK_VERSION}"; then
+	echo "emsdk ${EMSDK_VERSION} is already installed; skipping install/activate."
+else
+	echo "Installing and activating emsdk ${EMSDK_VERSION}..."
+	sudo "${EMSDK_DIR}/emsdk" install "${EMSDK_VERSION}"
+	sudo "${EMSDK_DIR}/emsdk" activate --embedded "${EMSDK_VERSION}"
+fi
 
 sudo -u "${OWNER_USER}" -H bash -lc "
 	set -euo pipefail
+	echo 'Entering build shell and preparing emsdk environment...'
 	set +u
-	source '${EMSDK_DIR}/emsdk_env.sh' >/dev/null
+	source '${EMSDK_DIR}/emsdk_env.sh'
 	set -u
+	echo 'emsdk environment is ready; starting Doom build steps...'
 	cd '${WEB_ROOT}'
 	if [ ! -s '${DOOM_WAD}' ]; then
+		echo 'Downloading doom1.wad...'
 		wget -q -O '${DOOM_WAD}' '${WAD_URL}'
 	fi
 	if [ -f Makefile ]; then
+		echo 'Running optional make clean...'
 		emmake make clean || true
 	fi
+	echo 'Running autoreconf...'
 	autoreconf -fiv
 	EM_HOST=\"\$(emcc -dumpmachine 2>/dev/null || true)\"
 	if [ -z \"\${EM_HOST}\" ]; then
 		EM_HOST='none-none-none'
 	fi
+	echo \"Configuring build with host \${EM_HOST}...\"
 	if ! ac_cv_exeext='.html' emconfigure ./configure --host=\"\${EM_HOST}\"; then
 		if [ \"\${EM_HOST}\" != 'none-none-none' ]; then
 			echo 'Configure with emcc host failed, retrying legacy host none-none-none...'
@@ -75,6 +86,7 @@ sudo -u "${OWNER_USER}" -H bash -lc "
 			exit 1
 		fi
 	fi
+	echo 'Running emmake make...'
 	emmake make -j\"\$(nproc)\"
 "
 
