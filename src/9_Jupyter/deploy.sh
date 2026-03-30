@@ -189,7 +189,6 @@ services:
     container_name: ${SERVICE_NAME}
     image: ${IMAGE_TAG}
     restart: unless-stopped
-    user: "${PUID}:${PGID}"
     environment:
       - TZ=${TZ:-UTC}
       - JUPYTER_TOKEN=${JUPYTER_TOKEN}
