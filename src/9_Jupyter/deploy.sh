@@ -173,7 +173,7 @@ wait_for_local_health() {
   local i
 
   for i in $(seq 1 "${retries}"); do
-    if curl --silent --show-error --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/api" >/dev/null; then
+    if curl --silent --fail "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" >/dev/null 2>&1; then
       return 0
     fi
     sleep "${delay}"
@@ -299,7 +299,7 @@ log "[6/9] Starting Jupyter container"
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
 [ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
 
-wait_for_local_health 40 2 || fail "Jupyter local health check failed on http://127.0.0.1:${PUBLISHED_HTTP_PORT}/api"
+wait_for_local_health 40 2 || fail "Jupyter local health check failed on http://127.0.0.1:${PUBLISHED_HTTP_PORT}/"
 
 log "[7/9] Provisioning TLS material for ${DOMAIN}"
 mkcert -install
