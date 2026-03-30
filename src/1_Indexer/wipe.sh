@@ -16,9 +16,28 @@ CONTAINER_NAME="core-indexer"
 HTPASSWD_FILE="/etc/nginx/.htpasswd_core"
 FORCE="${FORCE:-false}"
 PURGE_PACKAGES="${PURGE_PACKAGES:-true}"
+COMPOSE_CMD=()
 
 log() {
   echo "[core-indexer:wipe] $*"
+}
+
+resolve_compose_cmd() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if sudo docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(sudo docker-compose)
+    return 0
+  fi
+
+  return 1
 }
 
 confirm() {
@@ -53,8 +72,8 @@ ensure_ubuntu
 
 log "Stopping container workload"
 if command -v docker >/dev/null 2>&1; then
-  if [ -f "${COMPOSE_FILE}" ]; then
-    sudo docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  if resolve_compose_cmd && [ -f "${COMPOSE_FILE}" ]; then
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
   fi
   sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   sudo docker image rm -f "${IMAGE_TAG}" >/dev/null 2>&1 || true

@@ -170,13 +170,40 @@ echo "NetBird is available and running."
 echo "No local /etc/hosts rewrite is performed by this script."
 echo "Configure DNS centrally in the NetBird admin console for ${DOMAIN}."
 
-resolved_ip="$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+resolve_ipv4() {
+	local domain="$1"
+	local ip=""
+
+	ip="$(getent ahostsv4 "${domain}" 2>/dev/null | awk '{print $1; exit}' || true)"
+	if [ -z "${ip}" ]; then
+		ip="$(getent ahostsv4 "${domain}." 2>/dev/null | awk '{print $1; exit}' || true)"
+	fi
+	if [ -z "${ip}" ]; then
+		ip="$(getent hosts "${domain}" 2>/dev/null | awk '/^[0-9]+\./ {print $1; exit}' || true)"
+	fi
+	if [ -z "${ip}" ] && command -v resolvectl >/dev/null 2>&1; then
+		ip="$(resolvectl query "${domain}" 2>/dev/null | awk '/^[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $1; exit}' || true)"
+	fi
+	if [ -z "${ip}" ] && command -v dig >/dev/null 2>&1; then
+		ip="$(dig +short A "${domain}" 2>/dev/null | awk '/^[0-9]+\./ {print; exit}' || true)"
+	fi
+	if [ -z "${ip}" ] && command -v nslookup >/dev/null 2>&1; then
+		ip="$(nslookup "${domain}" 2>/dev/null | awk '/^Address: [0-9]+\./ {print $2; exit}' || true)"
+	fi
+
+	printf '%s' "${ip}"
+}
+
+resolved_ip="$(resolve_ipv4 "${DOMAIN}")"
 
 if [ -n "${resolved_ip}" ]; then
 	echo "Current DNS resolution: ${DOMAIN} -> ${resolved_ip}"
 else
 	echo "Warning: ${DOMAIN} did not resolve from this host."
 	echo "Check NetBird DNS management settings and nameserver group policies."
+	echo "Resolver diagnostics:"
+	echo "- /etc/resolv.conf nameservers:"
+	awk '/^nameserver[[:space:]]+/ {print "  " $2}' /etc/resolv.conf 2>/dev/null || true
 fi
 
 if [ "${resolved_ip:-}" = "${NETBIRD_DEVICE_IP}" ]; then

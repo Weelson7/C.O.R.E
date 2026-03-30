@@ -91,6 +91,28 @@ resolve_compose_cmd() {
   fail "Docker Compose v2 plugin is not available after installation"
 }
 
+remove_existing_indexer_containers() {
+  local ids=()
+  local id
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "name=^/${CONTAINER_NAME}$")
+
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    ids+=("${id}")
+  done < <(sudo docker ps -aq --filter "ancestor=${IMAGE_TAG}")
+
+  if [ "${#ids[@]}" -gt 0 ]; then
+    # Remove duplicates while preserving compatibility with bash 4 on Ubuntu hosts.
+    mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
+    log "Removing existing Indexer container workload (${#ids[@]} container(s))"
+    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 install_compose_plugin_manually() {
   local arch
   local plugin_arch
@@ -403,7 +425,7 @@ sudo systemctl restart nginx
 
 log "[7/8] Building and starting containerized API"
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+remove_existing_indexer_containers
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --build
 
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
