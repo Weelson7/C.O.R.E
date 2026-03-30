@@ -271,8 +271,10 @@ resolve_compose_cmd
 sudo systemctl enable docker
 sudo systemctl restart docker
 
-log "[2/8] Provisioning runtime directories"
+log "[2/9] Provisioning runtime directories"
 sudo mkdir -p "${INSTALL_DIR}" "${WORK_DIR}" "${CONFIG_DIR}"
+# Fix ownership so jovyan user (1000:100) can write to these directories
+sudo chown -R 1000:100 "${WORK_DIR}" "${CONFIG_DIR}"
 
 if [ -f "${COMPOSE_FILE}" ]; then
   log "Stopping existing stack before conflict checks"
