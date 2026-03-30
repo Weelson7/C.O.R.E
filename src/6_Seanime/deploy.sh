@@ -17,7 +17,7 @@ DATA_DIR="${INSTALL_DIR}/data"
 CONFIG_DIR="${INSTALL_DIR}/config"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
-IMAGE_TAG="${IMAGE_TAG:-ghcr.io/seanime/seanime:latest}"
+IMAGE_TAG="${IMAGE_TAG:-docker.io/umagistr/seanime:latest}"
 PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-14321}"
 CONTAINER_PORT="${CONTAINER_PORT:-4321}"
 MEDIA_LIBRARY_PATH="${MEDIA_LIBRARY_PATH:-/srv/media/anime}"

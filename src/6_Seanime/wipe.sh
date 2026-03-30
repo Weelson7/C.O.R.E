@@ -6,7 +6,7 @@ DOMAIN="seanime.core"
 SERVICE_NAME="core-seanime"
 INSTALL_DIR="/opt/core/seanime"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
-IMAGE_TAG="${IMAGE_TAG:-ghcr.io/seanime/seanime:latest}"
+IMAGE_TAG="${IMAGE_TAG:-docker.io/umagistr/seanime:latest}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
 NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"

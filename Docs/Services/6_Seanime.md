@@ -39,7 +39,7 @@
 	- `PUBLISHED_HTTP_PORT` (optional, default `14321`): host loopback port exposed to Nginx.
 	- `CONTAINER_PORT` (optional, default `4321`): Seanime container service port.
 	- `MEDIA_LIBRARY_PATH` (optional, default `/srv/media/anime`): host path mounted read-only at `/media/anime`.
-	- `IMAGE_TAG` (optional): container image tag, default `ghcr.io/seanime/seanime:latest`.
+	- `IMAGE_TAG` (optional): container image tag, default `docker.io/umagistr/seanime:latest`.
 - Security constraints:
 	- Script is Ubuntu-only and exits when host OS is not Ubuntu.
 	- Mesh-only administrative surface expected by policy per [Architecture.md § 8.1](../Architecture.md#81-access-model).
