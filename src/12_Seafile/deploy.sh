@@ -38,7 +38,7 @@ COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
 log() {
-  echo "[core-seafile] $*"
+  echo "[core-seafile] $*" >&2
 }
 
 fail() {
@@ -234,7 +234,12 @@ write_compose_file() {
   local mysql_root_password="$1"
 
   log "Writing Docker Compose file to ${COMPOSE_FILE}"
-  sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
+  
+  # Create a temporary file first to validate before writing with sudo
+  local tmp_compose
+  tmp_compose=$(mktemp)
+  
+  cat > "${tmp_compose}" <<'COMPOSE_EOF'
 networks:
   seafile-net:
     driver: bridge
@@ -242,15 +247,15 @@ networks:
 services:
   db:
     container_name: core-seafile-db
-    image: ${IMAGE_TAG_DB}
+    image: IMAGE_TAG_DB_PLACEHOLDER
     restart: unless-stopped
     networks: [seafile-net]
     environment:
-      - MYSQL_ROOT_PASSWORD="${mysql_root_password}"
-      - MYSQL_LOG_CONSOLE=true
-      - MARIADB_AUTO_UPGRADE=1
+      MYSQL_ROOT_PASSWORD: MYSQL_ROOT_PASSWORD_PLACEHOLDER
+      MYSQL_LOG_CONSOLE: "true"
+      MARIADB_AUTO_UPGRADE: "1"
     volumes:
-      - ${MYSQL_DIR}:/var/lib/mysql
+      - MYSQL_DIR_PLACEHOLDER:/var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -259,36 +264,63 @@ services:
 
   memcached:
     container_name: core-seafile-memcached
-    image: ${IMAGE_TAG_CACHE}
+    image: IMAGE_TAG_CACHE_PLACEHOLDER
     restart: unless-stopped
     networks: [seafile-net]
     entrypoint: memcached -m 256
 
   seafile:
-    container_name: ${SERVICE_NAME}
-    image: ${IMAGE_TAG}
+    container_name: SERVICE_NAME_PLACEHOLDER
+    image: IMAGE_TAG_PLACEHOLDER
     restart: unless-stopped
     networks: [seafile-net]
     ports:
-      - "127.0.0.1:${PUBLISHED_HTTP_PORT}:80"
+      - "127.0.0.1:PUBLISHED_HTTP_PORT_PLACEHOLDER:80"
     volumes:
-      - ${DATA_DIR}:/shared
-      - ${LOGS_DIR}:/opt/seafile/logs
+      - DATA_DIR_PLACEHOLDER:/shared
+      - LOGS_DIR_PLACEHOLDER:/opt/seafile/logs
     environment:
-      - TZ=${TZ:-UTC}
-      - DB_HOST=db
-      - DB_ROOT_PASSWD="${mysql_root_password}"
-      - SEAFILE_ADMIN_EMAIL="${SEAFILE_ADMIN_EMAIL}"
-      - SEAFILE_ADMIN_PASSWORD="${SEAFILE_ADMIN_PASSWORD}"
-      - SEAFILE_SERVER_HOSTNAME="${DOMAIN}"
-      - SEAFILE_SERVER_LETSENCRYPT=false
-      - FORCE_HTTPS_IN_CONF=false
+      TZ: TZ_PLACEHOLDER
+      DB_HOST: db
+      DB_ROOT_PASSWD: MYSQL_ROOT_PASSWORD_PLACEHOLDER
+      SEAFILE_ADMIN_EMAIL: SEAFILE_ADMIN_EMAIL_PLACEHOLDER
+      SEAFILE_ADMIN_PASSWORD: SEAFILE_ADMIN_PASSWORD_PLACEHOLDER
+      SEAFILE_SERVER_HOSTNAME: DOMAIN_PLACEHOLDER
+      SEAFILE_SERVER_LETSENCRYPT: "false"
+      FORCE_HTTPS_IN_CONF: "false"
     depends_on:
       db:
         condition: service_healthy
       memcached:
         condition: service_started
-EOF
+COMPOSE_EOF
+
+  # Now perform replacements with proper escaping
+  sed -i "s|IMAGE_TAG_DB_PLACEHOLDER|${IMAGE_TAG_DB}|g" "${tmp_compose}"
+  sed -i "s|IMAGE_TAG_CACHE_PLACEHOLDER|${IMAGE_TAG_CACHE}|g" "${tmp_compose}"
+  sed -i "s|SERVICE_NAME_PLACEHOLDER|${SERVICE_NAME}|g" "${tmp_compose}"
+  sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" "${tmp_compose}"
+  sed -i "s|PUBLISHED_HTTP_PORT_PLACEHOLDER|${PUBLISHED_HTTP_PORT}|g" "${tmp_compose}"
+  sed -i "s|DATA_DIR_PLACEHOLDER|${DATA_DIR}|g" "${tmp_compose}"
+  sed -i "s|LOGS_DIR_PLACEHOLDER|${LOGS_DIR}|g" "${tmp_compose}"
+  sed -i "s|MYSQL_DIR_PLACEHOLDER|${MYSQL_DIR}|g" "${tmp_compose}"
+  sed -i "s|TZ_PLACEHOLDER|${TZ:-UTC}|g" "${tmp_compose}"
+  sed -i "s|DOMAIN_PLACEHOLDER|${DOMAIN}|g" "${tmp_compose}"
+  
+  # Escape & and / in passwords for sed
+  local escaped_password
+  local escaped_email
+  local escaped_admin_password
+  escaped_password=$(printf '%s\n' "${mysql_root_password}" | sed -e 's/[\/&]/\\&/g')
+  escaped_email=$(printf '%s\n' "${SEAFILE_ADMIN_EMAIL}" | sed -e 's/[\/&]/\\&/g')
+  escaped_admin_password=$(printf '%s\n' "${SEAFILE_ADMIN_PASSWORD}" | sed -e 's/[\/&]/\\&/g')
+  
+  sed -i "s|MYSQL_ROOT_PASSWORD_PLACEHOLDER|${escaped_password}|g" "${tmp_compose}"
+  sed -i "s|SEAFILE_ADMIN_EMAIL_PLACEHOLDER|${escaped_email}|g" "${tmp_compose}"
+  sed -i "s|SEAFILE_ADMIN_PASSWORD_PLACEHOLDER|${escaped_admin_password}|g" "${tmp_compose}"
+
+  # Move to final location with sudo
+  sudo mv "${tmp_compose}" "${COMPOSE_FILE}"
   log "Docker Compose file written successfully"
 }
 
