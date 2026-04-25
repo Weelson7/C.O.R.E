@@ -16,7 +16,7 @@ INSTALL_DIR="/opt/core/ncdu-web-viewer"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
 
-HTTP_PORT="${HTTP_PORT:-3000}"
+HTTP_PORT="${HTTP_PORT:-3030}"
 SCAN_PATH="${SCAN_PATH:-/}"
 IMAGE_TAG="${IMAGE_TAG:-core/ncdu-web-viewer:local}"
 CONTAINER_NAME="core-ncdu-web-viewer"
@@ -201,7 +201,7 @@ class NCDUHandler(BaseHTTPRequestHandler):
         pass
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 3000))
+    port = int(os.getenv('PORT', 3030))
     server = HTTPServer(('0.0.0.0', port), NCDUHandler)
     print(f'ncdu HTTP server listening on 0.0.0.0:{port}')
     server.serve_forever()
