@@ -148,7 +148,7 @@ assert_host_port_available() {
 ensure_music_library_path() {
   local path="$1"
   if [ ! -d "${path}" ]; then
-    fail "MUSIC_LIBRARY_PATH does not exist or is not a directory: ${path}"
+    sudo mkdir -p "${path}"
   fi
   if [ ! -r "${path}" ]; then
     fail "MUSIC_LIBRARY_PATH is not readable: ${path}"
