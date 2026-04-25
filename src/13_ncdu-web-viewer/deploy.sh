@@ -186,7 +186,7 @@ def _scan_loop():
     while True:
         try:
             proc = subprocess.run(
-                ["ncdu", "-0", "-o", "-", SCAN_PATH],
+        ["ncdu", "-0", "-x", "--ignore-config", "-o", "-", SCAN_PATH],
                 capture_output=True,
                 text=True,
                 timeout=7200,
@@ -540,9 +540,8 @@ validate_resolved_ip() {
   fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
 }
 
-# FIX: health check now polls /health and accepts both 200 (ready) and 202
-# (scan in progress but server is alive).  Previously it only checked that the
-# HTTP server was up, which was sufficient; this makes the intent explicit.
+# FIX: health check now waits for /health to report 200 so deployment only
+# completes after the first full export is ready to render.
 wait_for_local_health() {
   local retries="${1:-30}"
   local delay="${2:-2}"
@@ -551,7 +550,7 @@ wait_for_local_health() {
   for i in $(seq 1 "${retries}"); do
     http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
       "http://127.0.0.1:${HTTP_PORT}/health" || true)"
-    if [ "${http_code}" = "200" ] || [ "${http_code}" = "202" ]; then
+    if [ "${http_code}" = "200" ]; then
       return 0
     fi
     sleep "${delay}"
