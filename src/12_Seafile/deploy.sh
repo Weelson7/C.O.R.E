@@ -8,6 +8,7 @@ INSTALL_DIR="/opt/core/seafile"
 DATA_DIR="${INSTALL_DIR}/data"
 MYSQL_DIR="${INSTALL_DIR}/mysql"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+LOGS_DIR="${INSTALL_DIR}/logs"
 
 IMAGE_TAG="${IMAGE_TAG:-seafileltd/seafile-mc:latest}"
 IMAGE_TAG_DB="${IMAGE_TAG_DB:-mariadb:10.11}"
