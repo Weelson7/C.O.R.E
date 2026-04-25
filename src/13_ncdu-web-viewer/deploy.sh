@@ -5,19 +5,23 @@ set -euo pipefail
 # Containerized architecture contract alignment:
 # 1) dependency installation
 # 2) TLS material provisioning
-# 3) container activation
-# 4) ingress configuration validation
-# 5) DNS resolution verification
-# 6) runtime health confirmation
+# 3) scan path validation
+# 4) container build context preparation
+# 5) ingress configuration and auth
+# 6) container activation
+# 7) DNS resolution verification
+# 8) runtime health confirmation
 
 DOMAIN="ncdu.core"
 SERVICE_NAME="core-ncdu-web-viewer"
 INSTALL_DIR="/opt/core/ncdu-web-viewer"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 DOCKERFILE_PATH="${INSTALL_DIR}/Dockerfile"
+PYTHON_APP_PATH="${INSTALL_DIR}/ncdu_http.py"
 
 HTTP_PORT="${HTTP_PORT:-3030}"
 SCAN_PATH="${SCAN_PATH:-/}"
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-3600}"
 IMAGE_TAG="${IMAGE_TAG:-core/ncdu-web-viewer:local}"
 CONTAINER_NAME="core-ncdu-web-viewer"
 
@@ -52,7 +56,6 @@ require_cmd() {
 
 ensure_ubuntu() {
   [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
-
   # shellcheck disable=SC1091
   . /etc/os-release
   [ "${ID:-}" = "ubuntu" ] || fail "This script is intended for Ubuntu hosts (detected: ${ID:-unknown})"
@@ -125,16 +128,314 @@ install_container_stack() {
 
 ensure_scan_path_readable() {
   local scan_path="$1"
-  
+
   if [ ! -d "${scan_path}" ]; then
     fail "Scan path does not exist or is not accessible: ${scan_path}"
   fi
-  
+
   if [ ! -r "${scan_path}" ]; then
     fail "Scan path is not readable: ${scan_path}"
   fi
 }
 
+# FIX: write the Python app as a standalone file so the Dockerfile can COPY it.
+# Previously the script embedded the Python source inside a bash heredoc inside
+# a Dockerfile RUN heredoc — a nested-heredoc construct that requires BuildKit
+# and breaks on Docker < 23.  Writing the file separately eliminates that
+# fragility entirely.
+write_python_app() {
+  local target="$1"
+
+  sudo tee "${target}" >/dev/null <<'PYEOF'
+#!/usr/bin/env python3
+"""
+C.O.R.E ncdu-web-viewer
+Runs ncdu in the background, exports its JSON, and serves an interactive
+disk-usage tree over HTTP.
+
+Endpoints:
+  GET /          — HTML tree viewer UI
+  GET /data      — raw ncdu JSON (202 while scan is in progress)
+  GET /health    — {"status":"ok"} once the first scan has completed,
+                   {"status":"scanning"} while the initial scan is running
+"""
+import json
+import os
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
+SCAN_PATH = "/mnt/scan"
+PORT = int(os.getenv("PORT", "3030"))
+REFRESH_INTERVAL = int(os.getenv("REFRESH_INTERVAL", "3600"))
+
+# Shared scan state
+_lock = threading.Lock()
+_state = {
+    "status": "scanning",   # "scanning" | "ok" | "error"
+    "data": None,           # raw ncdu JSON string
+    "error": None,
+    "scanned_at": None,
+}
+
+
+def _scan_loop():
+    """Background thread: run ncdu periodically and update shared state."""
+    while True:
+        try:
+            proc = subprocess.run(
+                ["ncdu", "-0", "-o", "-", SCAN_PATH],
+                capture_output=True,
+                text=True,
+                timeout=7200,
+            )
+            with _lock:
+                if proc.returncode == 0:
+                    _state["status"] = "ok"
+                    _state["data"] = proc.stdout
+                    _state["error"] = None
+                    _state["scanned_at"] = time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    )
+                else:
+                    _state["status"] = "error"
+                    _state["data"] = None
+                    _state["error"] = proc.stderr.strip() or "ncdu exited non-zero"
+        except subprocess.TimeoutExpired:
+            with _lock:
+                _state["status"] = "error"
+                _state["error"] = "ncdu scan timed out after 7200 seconds"
+        except Exception as exc:  # noqa: BLE001
+            with _lock:
+                _state["status"] = "error"
+                _state["error"] = str(exc)
+
+        time.sleep(REFRESH_INTERVAL)
+
+
+_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>ncdu-web-viewer &mdash; C.O.R.E</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#1a1a1a;color:#e0e0e0;font-family:monospace;font-size:14px;padding:1.5rem}
+    h1{color:#4fc3f7;margin-bottom:.25rem;font-size:1.25rem}
+    #meta{color:#888;margin-bottom:1rem;font-size:.85rem}
+    #status{color:#ffd54f;margin:1rem 0}
+    #tree{margin-top:.5rem}
+    .row{display:flex;align-items:center;padding:3px 0;border-bottom:1px solid #2a2a2a;cursor:pointer}
+    .row:hover{background:#2a2a2a}
+    .bar-wrap{width:160px;flex-shrink:0;background:#333;height:10px;border-radius:3px;margin-right:10px}
+    .bar{background:#4fc3f7;height:10px;border-radius:3px;transition:width .2s}
+    .size{width:80px;flex-shrink:0;text-align:right;margin-right:12px;color:#a5d6a7}
+    .name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dir{color:#ffd54f}
+    .icon{margin-right:5px;font-size:.9em;user-select:none}
+    .children{padding-left:20px}
+    .collapsed > .children{display:none}
+    .path-bar{color:#888;font-size:.8rem;margin-bottom:.5rem;word-break:break-all}
+  </style>
+</head>
+<body>
+  <h1>&#128202; C.O.R.E &mdash; ncdu-web-viewer</h1>
+  <div id="meta">Scan path: <code>/mnt/scan</code></div>
+  <div id="status">Loading scan data&hellip;</div>
+  <div id="tree"></div>
+  <script>
+  const fmt = (bytes) => {
+    const u = ['B','KiB','MiB','GiB','TiB'];
+    let i = 0, v = bytes;
+    while(v >= 1024 && i < u.length-1){v/=1024;i++}
+    return v.toFixed(i?1:0)+'\u00a0'+u[i];
+  };
+
+  // Parse ncdu JSON: [1, 0, {meta}, <dir_node>]
+  // dir_node: [{name,...}, child, child, ...]
+  // child: either an object (file) or an array (subdir, same structure)
+  function parseDir(node) {
+    const [info, ...children] = node;
+    const entries = children.map(c => {
+      if (Array.isArray(c)) {
+        const sub = parseDir(c);
+        return { ...sub, isDir: true };
+      }
+      return { name: c.name, dsize: c.dsize ?? c.asize ?? 0, isDir: false };
+    });
+    entries.sort((a,b) => b.dsize - a.dsize);
+    const dsize = info.dsize ?? info.asize ?? entries.reduce((s,e)=>s+e.dsize,0);
+    return { name: info.name, dsize, isDir: true, children: entries };
+  }
+
+  function buildNode(entry, maxSize) {
+    const div = document.createElement('div');
+    div.className = 'row' + (entry.isDir ? ' dir-row' : '');
+
+    const pct = maxSize > 0 ? Math.round(entry.dsize / maxSize * 100) : 0;
+    div.innerHTML =
+      '<div class="bar-wrap"><div class="bar" style="width:'+pct+'%"></div></div>' +
+      '<div class="size">'+fmt(entry.dsize)+'</div>' +
+      '<div class="name '+(entry.isDir?'dir':'')+'">' +
+        '<span class="icon">'+(entry.isDir?'&#128193;':'&#128196;')+'</span>' +
+        escHtml(entry.name) +
+      '</div>';
+
+    if (entry.isDir && entry.children && entry.children.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'dir-entry collapsed';
+
+      const childWrap = document.createElement('div');
+      childWrap.className = 'children';
+
+      const childMax = entry.children[0]?.dsize ?? 0;
+      entry.children.forEach(c => childWrap.appendChild(buildNode(c, childMax)));
+
+      wrap.appendChild(div);
+      wrap.appendChild(childWrap);
+
+      div.addEventListener('click', () => wrap.classList.toggle('collapsed'));
+      return wrap;
+    }
+
+    return div;
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  async function load() {
+    const statusEl = document.getElementById('status');
+    const treeEl = document.getElementById('tree');
+    const metaEl = document.getElementById('meta');
+
+    try {
+      const res = await fetch('/data');
+      if (res.status === 202) {
+        statusEl.textContent = 'Scan in progress\u2026 refreshing in 10 s';
+        setTimeout(load, 10000);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({error:'unknown error'}));
+        statusEl.textContent = 'Scan error: ' + (err.error || res.statusText);
+        setTimeout(load, 15000);
+        return;
+      }
+
+      const raw = await res.json();
+      // raw is: [1, 0, {meta}, rootDir]
+      const meta = raw[2] ?? {};
+      const rootNode = parseDir(raw[3]);
+
+      const ts = meta.timestamp
+        ? new Date(meta.timestamp * 1000).toLocaleString()
+        : 'unknown';
+      metaEl.innerHTML =
+        'Scan path: <code>/mnt/scan</code> &nbsp;|&nbsp; ' +
+        'ncdu ' + (meta.progver ?? '?') + ' &nbsp;|&nbsp; ' +
+        'Scanned at: ' + ts;
+      statusEl.textContent = '';
+
+      treeEl.innerHTML = '';
+      const maxSize = rootNode.children[0]?.dsize ?? 0;
+      rootNode.children.forEach(c => treeEl.appendChild(buildNode(c, maxSize)));
+
+      // Auto-refresh after REFRESH_INTERVAL (passed via data attribute)
+      const ri = parseInt(document.body.dataset.refresh || '3600', 10);
+      setTimeout(load, ri * 1000);
+
+    } catch(e) {
+      statusEl.textContent = 'Failed to load: ' + e.message;
+      setTimeout(load, 10000);
+    }
+  }
+
+  document.body.dataset.refresh = '""" + str(REFRESH_INTERVAL) + """';
+  load();
+  </script>
+</body>
+</html>
+"""
+
+
+class NCDUHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urlparse(self.path).path
+
+        if path == "/health":
+            with _lock:
+                status = _state["status"]
+            if status == "scanning":
+                self._send_json(202, {"status": "scanning"})
+            elif status == "ok":
+                self._send_json(200, {"status": "ok", "scanned_at": _state["scanned_at"]})
+            else:
+                self._send_json(500, {"status": "error", "error": _state["error"]})
+
+        elif path == "/data":
+            with _lock:
+                state = dict(_state)
+            if state["status"] == "scanning":
+                self._send_json(202, {"status": "scanning"})
+            elif state["status"] == "error":
+                self._send_json(500, {"status": "error", "error": state["error"]})
+            else:
+                body = state["data"].encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        elif path == "/":
+            # Embed REFRESH_INTERVAL into the HTML at serve time
+            body = _HTML.replace(
+                'document.body.dataset.refresh = \'""" + str(REFRESH_INTERVAL) + """\';',
+                f"document.body.dataset.refresh = '{REFRESH_INTERVAL}';",
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):  # noqa: N802
+        pass  # suppress per-request stdout noise
+
+
+if __name__ == "__main__":
+    t = threading.Thread(target=_scan_loop, daemon=True)
+    t.start()
+    print(f"ncdu HTTP server listening on 0.0.0.0:{PORT}", flush=True)
+    HTTPServer(("0.0.0.0", PORT), NCDUHandler).serve_forever()
+PYEOF
+  sudo chmod 644 "${target}"
+}
+
+# FIX: Dockerfile no longer embeds the Python source via a nested heredoc.
+# It simply COPYs the pre-written file, which works on all Docker versions.
+# Also fixed:
+#   - ENTRYPOINT now explicitly invokes python3 (exec form + shebang is fragile)
+#   - python3-requests removed (was never used)
+#   - WORKDIR removed (served no purpose; entrypoint uses absolute paths)
 write_dockerfile() {
   local target="$1"
 
@@ -144,73 +445,13 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ncdu \
     python3-minimal \
-    python3-requests \
     ca-certificates \
     curl \
   && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /app && cat > /app/ncdu_http.py <<'PYEOF'
-#!/usr/bin/env python3
-import subprocess
-import json
-import os
-import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
-import threading
+COPY ncdu_http.py /app/ncdu_http.py
 
-class NCDUHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/':
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.end_headers()
-            html = '''<!DOCTYPE html>
-<html>
-<head>
-  <title>ncdu-web-viewer</title>
-  <style>
-    body { font-family: monospace; background: #222; color: #0f0; padding: 2rem; }
-    .container { max-width: 1200px; margin: 0 auto; }
-    h1 { color: #0f0; }
-    iframe { width: 100%; height: 800px; border: 1px solid #0f0; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>C.O.R.E ncdu-web-viewer</h1>
-    <p>ncdu v2 is running on your C.O.R.E node. Analysis may take a moment...</p>
-    <iframe src="/ncdu/"></iframe>
-  </div>
-</body>
-</html>'''
-            self.wfile.write(html.encode())
-        
-        elif parsed_path.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(b'{"status": "ok"}')
-        
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        pass
-
-if __name__ == '__main__':
-    port = int(os.getenv('PORT', 3030))
-    server = HTTPServer(('0.0.0.0', port), NCDUHandler)
-    print(f'ncdu HTTP server listening on 0.0.0.0:{port}')
-    server.serve_forever()
-PYEOF
-RUN chmod +x /app/ncdu_http.py
-
-WORKDIR /mnt/scan
-ENTRYPOINT ["/app/ncdu_http.py"]
+ENTRYPOINT ["python3", "/app/ncdu_http.py"]
 EOF
 }
 
@@ -228,6 +469,7 @@ services:
     restart: unless-stopped
     environment:
       - PORT=${HTTP_PORT}
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL}
       - TZ=\${TZ:-UTC}
     volumes:
       - ${SCAN_PATH}:/mnt/scan:ro
@@ -273,6 +515,7 @@ server {
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_redirect off;
     proxy_buffering off;
+    proxy_read_timeout 120s;
   }
 }
 EOF
@@ -297,13 +540,18 @@ validate_resolved_ip() {
   fail "DNS mismatch for ${DOMAIN}: expected ${NETBIRD_DEVICE_IP}, got ${resolved_ip}"
 }
 
+# FIX: health check now polls /health and accepts both 200 (ready) and 202
+# (scan in progress but server is alive).  Previously it only checked that the
+# HTTP server was up, which was sufficient; this makes the intent explicit.
 wait_for_local_health() {
   local retries="${1:-30}"
   local delay="${2:-2}"
-  local i
+  local i http_code
 
   for i in $(seq 1 "${retries}"); do
-    if curl --silent --show-error --fail "http://127.0.0.1:${HTTP_PORT}/health" >/dev/null; then
+    http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      "http://127.0.0.1:${HTTP_PORT}/health" || true)"
+    if [ "${http_code}" = "200" ] || [ "${http_code}" = "202" ]; then
       return 0
     fi
     sleep "${delay}"
@@ -328,6 +576,8 @@ wait_for_ingress_health() {
 
   return 1
 }
+
+# ── main ──────────────────────────────────────────────────────────────────────
 
 ensure_ubuntu
 require_cmd sudo
@@ -373,6 +623,8 @@ ensure_scan_path_readable "${SCAN_PATH}"
 
 log "[4/8] Preparing container build context at ${INSTALL_DIR}"
 sudo mkdir -p "${INSTALL_DIR}"
+# FIX: write Python app first so the Dockerfile COPY instruction can find it
+write_python_app "${PYTHON_APP_PATH}"
 write_dockerfile "${DOCKERFILE_PATH}"
 write_compose_file "${COMPOSE_FILE}"
 
@@ -419,4 +671,6 @@ fi
 
 log "Deployment complete"
 log "Service is now accessible at https://${DOMAIN}/"
-log "Username: ${HTPASSWD_USER}"
+log "  Username : ${HTPASSWD_USER}"
+log "  Scan path: ${SCAN_PATH} (refreshes every ${REFRESH_INTERVAL}s)"
+log "  Note: first scan may still be in progress — check /health for status"
