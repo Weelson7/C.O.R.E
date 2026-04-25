@@ -269,7 +269,7 @@ SERVICE_CATALOG = [
     },
     {
         "name": "Doom",
-        "domain": "doom.zenith.su",
+        "domain": "doom.core",
         "description": "WASM DOOM runtime",
         "node": "node-0",
         "role": "alpha",
