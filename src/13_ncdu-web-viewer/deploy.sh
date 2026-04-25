@@ -233,12 +233,6 @@ services:
       - ${SCAN_PATH}:/mnt/scan:ro
     ports:
       - "127.0.0.1:${HTTP_PORT}:${HTTP_PORT}"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:${HTTP_PORT}/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 EOF
 }
 
