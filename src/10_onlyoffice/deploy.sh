@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CONTROL_HEADER: Service 10 - C.O.R.E OnlyOffice (onlyoffice.core)
+# CONTROL_HEADER: Service 10 - C.O.R.E OnlyOffice DocSpace (onlyoffice.core)
 
 # Containerized architecture contract alignment:
 # 1) dependency installation
@@ -18,8 +18,8 @@ DATA_DIR="${INSTALL_DIR}/data"
 LOG_DIR="${INSTALL_DIR}/logs"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
-IMAGE_TAG="${IMAGE_TAG:-onlyoffice/documentserver}"
-PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-8005}"
+IMAGE_TAG="${IMAGE_TAG:-onlyoffice/docspace:latest}"
+PUBLISHED_HTTP_PORT="${PUBLISHED_HTTP_PORT:-8000}"
 
 NGINX_SSL_DIR="/etc/nginx/ssl"
 NGINX_CERT_FILE="${NGINX_SSL_DIR}/${DOMAIN}.crt"

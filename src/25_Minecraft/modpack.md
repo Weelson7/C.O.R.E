@@ -286,59 +286,63 @@ replacePropertyMap = true
 xpOrbMaxValue = 2500
 ```
 
-### `config/smoothchunksave.toml`
-```toml
-saveInterval = 400   # ticks between async saves (default is lower)
-```
-
-### `config/create-common.toml` (Create)
-```toml
-# Reduce contraption entity limits to prevent lag spikes with Aeronautics
-[contraptions]
-  maxContraptionWeight = 32768
-  movementChecksPerTick = 2
-```
-
-### `config/iceandfire-common.toml`
-```toml
-# Reduce dragon spawn rate with all the mob mods active
-dragonSpawnChance = 0.002
-firedrakeSpawnChance = 0.002
-iceDragonSpawnChance = 0.002
-```
-
-### `config/alexsmobs.toml`
-```toml
-# Reduce global mob cap contribution
-spawnRateModifier = 0.75
-```
-
-### `config/mowziesmobs.cfg`
-```toml
-# Scale back spawn weight if world gen is crowded
-B:spawnBossWhenChunkIsLoaded = false
-```
-
-### `config/terrablender-common.toml`
-```toml
-# Adjust biome region sizes for server perf
-netherRegionsPerArea = 2
-overworldRegionsPerArea = 4
-```
-
-### `config/waystones-server.toml`
-```toml
-# Prevent abuse of free teleportation on a server
-inventoryButtonCooldown = 300
-```
-
-### `config/ars_nouveau.json` (Ars Nouveau)
+### `config/smoothchunk.json`
 ```json
 {
-  "maxManaRegen": 200,
-  "sourceJarCapacity": 10000,
-  "bookwormEnabled": true
+  "chunkSaveDelay": 420
 }
+```
+
+### `config/create-server.toml` (Create)
+```toml
+# Reduce contraption stress on server tick time
+[kinetics.contraptions]
+maxBlocksMoved = 1024
+```
+
+### `config/iceandfire/iaf-common.json`
+```json
+{
+  "generateDragonSkeletons": true,
+  "generateDragonRoosts": true,
+  "generateDragonCaves": true
+}
+```
+
+### `config/alexsmobs-common.toml`
+```toml
+# Keep rare/high-load spawns in check
+gorillaSpawnWeight = 18
+crimsonMosquitoSpawnWeight = 10
+```
+
+### `config/mowziesmobs-common.toml`
+```toml
+# Lower helper count and burst damage pressure
+[tools_and_abilities]
+supernova_cost = 80
+
+[tools_and_abilities.sol_visage]
+max_followers = 6
+```
+
+### `config/terrablender.toml`
+```toml
+# Adjust biome region sizes for server perf
+overworld_region_size = 4
+```
+
+### `config/waystones-common.toml`
+```toml
+# Reduce wild generation density and keep inventory-button cooldown
+chunksBetweenWildWaystones = 40
+```
+
+### `config/ars_nouveau-server.toml` (Ars Nouveau)
+```toml
+[mana]
+baseRegen = 5
+baseMax = 100
 ```
 
 ### `config/occultism-server.toml` (Occultism)

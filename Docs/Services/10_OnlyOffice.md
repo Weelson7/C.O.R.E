@@ -8,9 +8,9 @@
 - [Files](#files)
 
 ## Infos
-- What it is: A containerized OnlyOffice DocSpace instance for document editing and collaboration.
-- What it does: Provides online document editing, spreadsheet, and presentation capabilities with real-time collaboration.
-- Why this service exists in C.O.R.E: Enables private document editing and office suite functionality within the mesh network.
+- What it is: A containerized ONLYOFFICE DocSpace instance for document editing and collaboration.
+- What it does: Provides a workspace-style web app for documents, spreadsheets, presentations, and collaboration.
+- Why this service exists in C.O.R.E: Enables a private document collaboration workspace within the mesh network.
 
 ## Commands
 - Start: `sudo docker compose -f /opt/core/onlyoffice/compose.yaml up -d`
