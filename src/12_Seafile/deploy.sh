@@ -290,6 +290,14 @@ server {
 EOF
 }
 
+prepare_directories() {
+  log "Preparing directories with Seafile permissions (UID 1000:GID 1000)..."
+  sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${MYSQL_DIR}" "${LOGS_DIR}"
+  sudo chown -R 1000:1000 "${INSTALL_DIR}"
+  sudo chmod -R 755 "${INSTALL_DIR}"
+  log "Directories ready: ${INSTALL_DIR}/*"
+}
+
 cleanup_previous_runtime() {
   log "Cleaning up previous runtime..."
 
@@ -349,7 +357,7 @@ sudo systemctl enable docker
 sudo systemctl restart docker
 
 log "[2/7] Provisioning directories"
-sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${MYSQL_DIR}"
+prepare_directories
 
 log "[3/7] Generating secrets and compose file"
 MYSQL_ROOT_PASSWORD="$(generate_secret)"
