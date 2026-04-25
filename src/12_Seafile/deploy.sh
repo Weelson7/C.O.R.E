@@ -246,7 +246,7 @@ services:
     restart: unless-stopped
     networks: [seafile-net]
     environment:
-      - MYSQL_ROOT_PASSWORD=${mysql_root_password}
+      - MYSQL_ROOT_PASSWORD="${mysql_root_password}"
       - MYSQL_LOG_CONSOLE=true
       - MARIADB_AUTO_UPGRADE=1
     volumes:
@@ -277,10 +277,10 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - DB_HOST=db
-      - DB_ROOT_PASSWD=${mysql_root_password}
-      - SEAFILE_ADMIN_EMAIL=${SEAFILE_ADMIN_EMAIL}
-      - SEAFILE_ADMIN_PASSWORD=${SEAFILE_ADMIN_PASSWORD}
-      - SEAFILE_SERVER_HOSTNAME=${DOMAIN}
+      - DB_ROOT_PASSWD="${mysql_root_password}"
+      - SEAFILE_ADMIN_EMAIL="${SEAFILE_ADMIN_EMAIL}"
+      - SEAFILE_ADMIN_PASSWORD="${SEAFILE_ADMIN_PASSWORD}"
+      - SEAFILE_SERVER_HOSTNAME="${DOMAIN}"
       - SEAFILE_SERVER_LETSENCRYPT=false
       - FORCE_HTTPS_IN_CONF=false
     depends_on:
