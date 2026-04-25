@@ -206,8 +206,6 @@ generate_jwt_secret() {
 
 write_compose_file() {
   local jwt_secret="$1"
-
-  log "Writing Docker Compose file to ${COMPOSE_FILE}"
   sudo tee "${COMPOSE_FILE}" >/dev/null <<EOF
 services:
   onlyoffice:
@@ -215,7 +213,7 @@ services:
     image: ${IMAGE_TAG}
     restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=UTC
       - JWT_ENABLED=true
       - JWT_SECRET=${jwt_secret}
     volumes:

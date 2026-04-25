@@ -76,6 +76,5 @@ validate_payload
 
 log "Setup complete."
 log "Next steps:"
-log "1) Populate mods/, config/, and defaultconfigs/ from your validated instance."
-log "2) Ensure neoforge-21.1.228-server.jar is present in ${SERVICE_DIR}."
-log "3) Start server with: ./run.sh"
+log "1) Ensure neoforge-21.1.228-server.jar is present in ${SERVICE_DIR}."
+log "2) Start server with: ./run.sh"
