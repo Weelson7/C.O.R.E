@@ -1,0 +1,4 @@
+#multiplier
+# Default: 1.0
+# Range: 0.001 ~ 1.7976931348623157E308
+burnRateMultiplier = 1.0

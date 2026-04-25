@@ -59,7 +59,7 @@ This document defines the target architecture for C.O.R.E. (Clustered Orchestrat
 - All service containers are installed on every node.
 - Service enablement is controlled by Supervisor policy, not by installation differences.
 - Transitional execution mode: node-local deploy scripts are allowed until all service containers are proven stable and operationally reliable.
-- Current numbered service inventory spans 0 through 14, with service 14 assigned to Music Assistant.
+- Current numbered service inventory spans 0 through 25, with service 25 assigned to Minecraft.
 
 ### 5.2 Containerization Policy
 
