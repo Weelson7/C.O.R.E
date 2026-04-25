@@ -252,14 +252,12 @@ write_nginx_site() {
   sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
 server {
     listen 80;
-    listen [::]:80;
     server_name ${DOMAIN};
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     ${NGINX_CERT_FILE};
