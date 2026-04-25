@@ -190,15 +190,15 @@ wait_for_local_onlyoffice_health() {
 }
 
 generate_jwt_secret() {
-  log "Generating random JWT secret..."
+  log "Generating random JWT secret..." >&2
   local secret
 
   if command -v openssl >/dev/null 2>&1; then
     secret="$(openssl rand -hex 32)"
-    log "JWT secret generated via openssl"
+    log "JWT secret generated via openssl" >&2
   else
     secret="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 64)"
-    log "JWT secret generated via /dev/urandom (openssl not available)"
+    log "JWT secret generated via /dev/urandom (openssl not available)" >&2
   fi
 
   echo "${secret}"
