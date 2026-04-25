@@ -154,9 +154,31 @@ import subprocess
 import json
 import os
 import sys
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 import threading
+
+# Global ncdu JSON cache (updated every 30s)
+ncdu_cache = None
+cache_time = 0
+CACHE_TTL = 30
+
+def get_ncdu_json():
+    global ncdu_cache, cache_time
+    now = time.time()
+    if ncdu_cache is not None and (now - cache_time) < CACHE_TTL:
+        return ncdu_cache
+    try:
+        result = subprocess.run(['ncdu', '--json', '/mnt/scan'], 
+                               capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            ncdu_cache = json.loads(result.stdout)
+            cache_time = now
+            return ncdu_cache
+    except Exception:
+        pass
+    return None
 
 class NCDUHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -174,14 +196,52 @@ class NCDUHandler(BaseHTTPRequestHandler):
     body { font-family: monospace; background: #222; color: #0f0; padding: 2rem; }
     .container { max-width: 1200px; margin: 0 auto; }
     h1 { color: #0f0; }
-    iframe { width: 100%; height: 800px; border: 1px solid #0f0; }
+    pre { background: #111; padding: 1rem; border: 1px solid #0f0; overflow: auto; white-space: pre-wrap; }
+    .refresh { margin-top: 1rem; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>C.O.R.E ncdu-web-viewer</h1>
-    <p>ncdu v2 is running on your C.O.R.E node. Analysis may take a moment...</p>
-    <iframe src="/ncdu/"></iframe>
+    <p>Live ncdu JSON analysis of <code>${SCAN_PATH}</code>. Refreshes every 30s.</p>
+    <div id="content">
+      <p>Loading ncdu data...</p>
+    </div>
+    <button class="refresh" onclick="loadNcdu()">Refresh</button>
+    <script>
+      function formatSize(bytes) {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let size = bytes;
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+          size /= 1024;
+          unit++;
+        }
+        return size.toFixed(1) + units[unit];
+      }
+      function renderNode(node, prefix = '') {
+        if (!node) return '';
+        let html = prefix + node.n + ': ' + formatSize(node.d || 0) + '\\n';
+        if (node.s && node.s.length) {
+          node.s.forEach(child => {
+            html += renderNode(child, prefix + '  ');
+          });
+        }
+        return html;
+      }
+      async function loadNcdu() {
+        try {
+          const res = await fetch('/ncdu/');
+          const data = await res.json();
+          document.getElementById('content').innerHTML = 
+            '<pre>' + renderNode(data) + '</pre>';
+        } catch(e) {
+          document.getElementById('content').innerHTML = '<p>Error loading data</p>';
+        }
+      }
+      loadNcdu();
+      setInterval(loadNcdu, 30000);
+    </script>
   </div>
 </body>
 </html>'''
@@ -192,6 +252,18 @@ class NCDUHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"status": "ok"}')
+        
+        elif parsed_path.path == '/ncdu/':
+            data = get_ncdu_json()
+            if data:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(data, indent=2).encode())
+            else:
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'{"error": "ncdu scan failed"}')
         
         else:
             self.send_response(404)
