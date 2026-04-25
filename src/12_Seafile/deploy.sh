@@ -2,21 +2,11 @@
 set -euo pipefail
 # CONTROL_HEADER: Service 12 - C.O.R.E Seafile (seafile.core)
 
-# Containerized architecture contract alignment:
-# 1) dependency installation
-# 2) runtime directory provisioning
-# 3) secret generation and container runtime definition generation
-# 4) container activation
-# 5) TLS material provisioning
-# 6) ingress configuration and validation
-# 7) mesh DNS and runtime health validation
-
 SERVICE_NAME="core-seafile"
 DOMAIN="seafile.core"
 INSTALL_DIR="/opt/core/seafile"
 DATA_DIR="${INSTALL_DIR}/data"
 MYSQL_DIR="${INSTALL_DIR}/mysql"
-LOGS_DIR="${INSTALL_DIR}/logs"
 COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
 
 IMAGE_TAG="${IMAGE_TAG:-seafileltd/seafile-mc:latest}"
@@ -37,6 +27,7 @@ SEAFILE_ADMIN_PASSWORD="${SEAFILE_ADMIN_PASSWORD:-}"
 COMPOSE_CMD=()
 DOCKER_COMPOSE_PLUGIN_VERSION="${DOCKER_COMPOSE_PLUGIN_VERSION:-v2.29.7}"
 
+# Log to stderr so it doesn't get captured by variable expansion
 log() {
   echo "[core-seafile] $*" >&2
 }
@@ -49,126 +40,81 @@ fail() {
 require_cmd() {
   log "Checking for required command: $1"
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
-  log "Required command found: $1"
 }
 
 ensure_ubuntu() {
   log "Ensuring operating system is Ubuntu..."
-  [ -r /etc/os-release ] || fail "Cannot determine operating system (/etc/os-release missing)"
-
-  log "Reading /etc/os-release for OS information"
-  # shellcheck disable=SC1091
+  [ -r /etc/os-release ] || fail "Cannot determine operating system"
   . /etc/os-release
-  [ "${ID:-}" = "ubuntu" ] || fail "This script is intended for Ubuntu hosts (detected: ${ID:-unknown})"
-  log "Operating system confirmed as Ubuntu"
+  [ "${ID:-}" = "ubuntu" ] || fail "This script requires Ubuntu (detected: ${ID:-unknown})"
 }
 
 ensure_value() {
-  log "Ensuring required value for ${1}"
   local var_name="$1"
   local prompt="$2"
   local current_value="${!var_name:-}"
 
   while [ -z "${current_value}" ]; do
-    log "Value for ${var_name} is required but not set"
-    log "Prompting for ${var_name}"
     read -r -p "${prompt}: " current_value
-    log "Value for ${var_name} received: ${current_value}"
   done
 
-  log "Value for ${var_name} is set"
   printf -v "${var_name}" '%s' "${current_value}"
 }
 
 ensure_secret_value() {
-  log "Ensuring required secret value for ${1}"
   local var_name="$1"
   local prompt="$2"
   local current_value="${!var_name:-}"
 
   while [ -z "${current_value}" ]; do
-    log "Value for ${var_name} is required but not set"
-    log "Prompting for ${var_name} (input will be hidden)"
     read -r -s -p "${prompt}: " current_value
     echo
-    log "Value for ${var_name} received (hidden)"
   done
 
-  log "Value for ${var_name} is set"
   printf -v "${var_name}" '%s' "${current_value}"
 }
 
 resolve_compose_cmd() {
-  log "Resolving Docker Compose v2 command..."
-
   if sudo docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD=(sudo docker compose)
-    log "Docker Compose v2 plugin resolved via 'docker compose'"
+    return 0
+  fi
+  fail "Docker Compose v2 plugin not available"
+}
+
+install_container_stack() {
+  if sudo apt install -y docker.io docker-compose-plugin 2>/dev/null; then
     return 0
   fi
 
-  fail "Docker Compose v2 plugin is not available after installation"
-}
+  log "docker-compose-plugin unavailable; installing manually"
+  sudo apt install -y docker.io
 
-install_compose_plugin_manually() {
-  local arch
-  local plugin_arch
-  local plugin_dir="/usr/local/lib/docker/cli-plugins"
-  local plugin_path="${plugin_dir}/docker-compose"
-  local plugin_url=""
-
-  log "Detecting host architecture for manual compose plugin installation..."
+  local arch plugin_arch plugin_dir plugin_path plugin_url
   arch="$(uname -m)"
-  log "Detected host architecture: ${arch}"
+  plugin_dir="/usr/local/lib/docker/cli-plugins"
+  plugin_path="${plugin_dir}/docker-compose"
 
   case "${arch}" in
     x86_64|amd64) plugin_arch="x86_64" ;;
     aarch64|arm64) plugin_arch="aarch64" ;;
-    *) fail "Unsupported architecture for compose plugin fallback: ${arch}" ;;
+    *) fail "Unsupported architecture: ${arch}" ;;
   esac
 
-  log "Mapped architecture to compose plugin variant: ${plugin_arch}"
   plugin_url="https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_PLUGIN_VERSION}/docker-compose-linux-${plugin_arch}"
-  log "Compose plugin download URL: ${plugin_url}"
-
-  log "Creating Docker CLI plugins directory at ${plugin_dir}"
   sudo mkdir -p "${plugin_dir}"
-
-  log "Downloading Docker Compose plugin to ${plugin_path}"
   sudo curl -fsSL "${plugin_url}" -o "${plugin_path}"
-
-  log "Setting execute permission on ${plugin_path}"
   sudo chmod +x "${plugin_path}"
-
-  log "Docker Compose plugin installed manually to ${plugin_path}"
-}
-
-install_container_stack() {
-  log "Attempting to install docker.io and docker-compose-plugin via apt..."
-
-  if sudo apt install -y docker.io docker-compose-plugin; then
-    log "docker.io and docker-compose-plugin installed via apt"
-    return 0
-  fi
-
-  log "Package docker-compose-plugin unavailable; installing Docker Compose plugin manually"
-  sudo apt install -y docker.io
-  log "docker.io installed via apt"
-  install_compose_plugin_manually
 }
 
 validate_resolved_ip() {
   local resolved_ip="$1"
 
-  log "Validating resolved IP ${resolved_ip} for ${DOMAIN}..."
-
   if [ "${resolved_ip}" = "${NETBIRD_DEVICE_IP}" ]; then
-    log "Resolved IP ${resolved_ip} matches primary device IP ${NETBIRD_DEVICE_IP}"
     return 0
   fi
 
   if [ -n "${NETBIRD_FAILOVER_IP}" ] && [ "${resolved_ip}" = "${NETBIRD_FAILOVER_IP}" ]; then
-    log "DNS currently resolves to configured failover IP (${NETBIRD_FAILOVER_IP})"
     return 0
   fi
 
@@ -182,63 +128,45 @@ validate_resolved_ip() {
 wait_for_local_seafile_health() {
   local retries="${1:-100}"
   local delay_seconds="${2:-3}"
-  local i
-  local endpoint
-  local status_code
+  local i status_code
 
-  log "Waiting for local Seafile health check to pass (max ${retries} attempts, ${delay_seconds}s delay)..."
-  log "Note: first-run database initialisation may take up to 5 minutes"
+  log "Waiting for Seafile to be healthy (max ${retries} attempts, ${delay_seconds}s delay)..."
 
   for i in $(seq 1 "${retries}"); do
-    log "Health check attempt ${i}/${retries}..."
-
     for endpoint in "http://127.0.0.1:${PUBLISHED_HTTP_PORT}/" "http://localhost:${PUBLISHED_HTTP_PORT}/"; do
-      log "Probing ${endpoint}"
       status_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "${endpoint}" 2>/dev/null || true)"
-      log "HTTP response code from ${endpoint}: ${status_code}"
-
+      
       case "${status_code}" in
         200|301|302|303)
-          log "Seafile responded with acceptable status code ${status_code} at ${endpoint}"
+          log "Seafile healthy (HTTP ${status_code})"
           return 0
           ;;
       esac
     done
 
-    log "Seafile not yet healthy; waiting ${delay_seconds}s before next attempt"
+    log "Attempt ${i}/${retries}: not ready, waiting ${delay_seconds}s..."
     sleep "${delay_seconds}"
   done
 
-  log "Seafile did not become healthy after ${retries} attempts"
   return 1
 }
 
 generate_secret() {
-  local label="$1"
   local secret
-
-  log "Generating random secret for ${label}..."
-
   if command -v openssl >/dev/null 2>&1; then
     secret="$(openssl rand -hex 32)"
-    log "Secret for ${label} generated via openssl"
   else
     secret="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 64)"
-    log "Secret for ${label} generated via /dev/urandom (openssl not available)"
   fi
-
   echo "${secret}"
 }
 
 write_compose_file() {
   local mysql_root_password="$1"
-
-  log "Writing Docker Compose file to ${COMPOSE_FILE}"
-  
-  # Create a temporary file first to validate before writing with sudo
   local tmp_compose
+
   tmp_compose=$(mktemp)
-  
+
   cat > "${tmp_compose}" <<'COMPOSE_EOF'
 networks:
   seafile-net:
@@ -278,9 +206,8 @@ services:
       - "127.0.0.1:PUBLISHED_HTTP_PORT_PLACEHOLDER:80"
     volumes:
       - DATA_DIR_PLACEHOLDER:/shared
-      - LOGS_DIR_PLACEHOLDER:/opt/seafile/logs
     environment:
-      TZ: TZ_PLACEHOLDER
+      TZ: UTC
       DB_HOST: db
       DB_ROOT_PASSWD: MYSQL_ROOT_PASSWORD_PLACEHOLDER
       SEAFILE_ADMIN_EMAIL: SEAFILE_ADMIN_EMAIL_PLACEHOLDER
@@ -295,37 +222,32 @@ services:
         condition: service_started
 COMPOSE_EOF
 
-  # Now perform replacements with proper escaping
+  # Safe replacements using sed
   sed -i "s|IMAGE_TAG_DB_PLACEHOLDER|${IMAGE_TAG_DB}|g" "${tmp_compose}"
   sed -i "s|IMAGE_TAG_CACHE_PLACEHOLDER|${IMAGE_TAG_CACHE}|g" "${tmp_compose}"
   sed -i "s|SERVICE_NAME_PLACEHOLDER|${SERVICE_NAME}|g" "${tmp_compose}"
   sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" "${tmp_compose}"
   sed -i "s|PUBLISHED_HTTP_PORT_PLACEHOLDER|${PUBLISHED_HTTP_PORT}|g" "${tmp_compose}"
   sed -i "s|DATA_DIR_PLACEHOLDER|${DATA_DIR}|g" "${tmp_compose}"
-  sed -i "s|LOGS_DIR_PLACEHOLDER|${LOGS_DIR}|g" "${tmp_compose}"
   sed -i "s|MYSQL_DIR_PLACEHOLDER|${MYSQL_DIR}|g" "${tmp_compose}"
-  sed -i "s|TZ_PLACEHOLDER|${TZ:-UTC}|g" "${tmp_compose}"
   sed -i "s|DOMAIN_PLACEHOLDER|${DOMAIN}|g" "${tmp_compose}"
-  
-  # Escape & and / in passwords for sed
-  local escaped_password
-  local escaped_email
-  local escaped_admin_password
+
+  # Escape special characters for sed
+  local escaped_password escaped_email escaped_admin_password
   escaped_password=$(printf '%s\n' "${mysql_root_password}" | sed -e 's/[\/&]/\\&/g')
   escaped_email=$(printf '%s\n' "${SEAFILE_ADMIN_EMAIL}" | sed -e 's/[\/&]/\\&/g')
   escaped_admin_password=$(printf '%s\n' "${SEAFILE_ADMIN_PASSWORD}" | sed -e 's/[\/&]/\\&/g')
-  
+
   sed -i "s|MYSQL_ROOT_PASSWORD_PLACEHOLDER|${escaped_password}|g" "${tmp_compose}"
   sed -i "s|SEAFILE_ADMIN_EMAIL_PLACEHOLDER|${escaped_email}|g" "${tmp_compose}"
   sed -i "s|SEAFILE_ADMIN_PASSWORD_PLACEHOLDER|${escaped_admin_password}|g" "${tmp_compose}"
 
-  # Move to final location with sudo
   sudo mv "${tmp_compose}" "${COMPOSE_FILE}"
-  log "Docker Compose file written successfully"
+  log "Compose file written"
 }
 
 write_nginx_site() {
-  log "Writing Nginx site configuration to ${NGINX_SITE_FILE}"
+  log "Writing Nginx configuration"
   sudo tee "${NGINX_SITE_FILE}" >/dev/null <<EOF
 server {
     listen 80;
@@ -366,23 +288,17 @@ server {
     error_log  /var/log/nginx/core-seafile.error.log warn;
 }
 EOF
-  log "Nginx site configuration written successfully"
 }
 
 cleanup_previous_runtime() {
-  log "Cleaning previous Seafile runtime artifacts..."
-  local ids=()
-  local id
+  log "Cleaning up previous runtime..."
 
   if [ -f "${COMPOSE_FILE}" ]; then
-    log "Compose file found at ${COMPOSE_FILE}; tearing down existing stack"
-    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-    log "Existing compose stack torn down"
-  else
-    log "No compose file found at ${COMPOSE_FILE}; skipping stack teardown"
+    "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" down --remove-orphans 2>/dev/null || true
   fi
 
-  log "Collecting container IDs matching Seafile stack containers..."
+  local ids id
+  ids=()
   for filter in \
     "name=^/${SERVICE_NAME}$" \
     "name=^/core-seafile-db$" \
@@ -391,154 +307,113 @@ cleanup_previous_runtime() {
     "ancestor=${IMAGE_TAG_DB}" \
     "ancestor=${IMAGE_TAG_CACHE}"; do
     while IFS= read -r id; do
-      [ -n "${id}" ] || continue
-      ids+=("${id}")
-    done < <(sudo docker ps -aq --filter "${filter}")
+      [ -n "${id}" ] && ids+=("${id}")
+    done < <(sudo docker ps -aq --filter "${filter}" 2>/dev/null)
   done
 
   if [ "${#ids[@]}" -gt 0 ]; then
     mapfile -t ids < <(printf '%s\n' "${ids[@]}" | awk '!seen[$1]++')
-    log "Removing existing Seafile container workload (${#ids[@]} container(s))"
-    sudo docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
-    log "Existing Seafile containers removed"
-  else
-    log "No existing Seafile containers found; nothing to remove"
+    sudo docker rm -f "${ids[@]}" 2>/dev/null || true
   fi
+
+  log "Cleanup complete"
 }
 
+# Main execution
 ensure_ubuntu
 require_cmd sudo
 require_cmd apt
 require_cmd getent
 require_cmd awk
 
-ensure_value    NETBIRD_DEVICE_IP      "Enter NETBIRD_DEVICE_IP (primary mesh IP expected for ${DOMAIN})"
-ensure_value    SEAFILE_ADMIN_EMAIL    "Enter Seafile admin email"
+log "=== Seafile Deployment Script ==="
+log "Domain: ${DOMAIN}"
+log "Install directory: ${INSTALL_DIR}"
+
+ensure_value NETBIRD_DEVICE_IP "Enter NETBIRD_DEVICE_IP"
+ensure_value SEAFILE_ADMIN_EMAIL "Enter Seafile admin email"
 ensure_secret_value SEAFILE_ADMIN_PASSWORD "Enter Seafile admin password"
 
-log "[1/7] Installing deployment dependencies"
-log "Running apt update..."
+log "[1/7] Installing dependencies"
 sudo apt update -y
-log "apt update complete"
-
-log "Installing nginx, mkcert, curl, ca-certificates..."
 sudo apt install -y nginx mkcert curl ca-certificates
-log "Core packages installed"
-
-log "Installing container stack (docker.io, docker-compose-plugin)..."
 install_container_stack
-
 require_cmd mkcert
 require_cmd nginx
 require_cmd docker
 require_cmd curl
 resolve_compose_cmd
 
-log "Enabling and restarting Docker daemon..."
+log "Enabling Docker daemon"
 sudo systemctl enable docker
 sudo systemctl restart docker
-log "Docker daemon enabled and restarted"
 
-log "[2/7] Provisioning runtime directories"
-log "Creating install, data, mysql, and logs directories..."
-sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${MYSQL_DIR}" "${LOGS_DIR}"
-log "Directories created: ${INSTALL_DIR}, ${DATA_DIR}, ${MYSQL_DIR}, ${LOGS_DIR}"
+log "[2/7] Provisioning directories"
+sudo mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${MYSQL_DIR}"
 
-log "[3/7] Generating secrets and writing container runtime definition"
-MYSQL_ROOT_PASSWORD="$(generate_secret "MySQL root")"
+log "[3/7] Generating secrets and compose file"
+MYSQL_ROOT_PASSWORD="$(generate_secret)"
 write_compose_file "${MYSQL_ROOT_PASSWORD}"
-log "MySQL root password written into compose file (not echoed to log)"
 
 log "[4/7] Starting Seafile stack"
 cleanup_previous_runtime
-
-log "Bringing up Seafile stack via compose..."
 "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d
-log "Compose up complete; inspecting main container state..."
 
+sleep 5
 container_state="$(sudo docker inspect -f '{{.State.Status}}' "${SERVICE_NAME}" 2>/dev/null || true)"
-log "Container ${SERVICE_NAME} state: ${container_state}"
-[ "${container_state}" = "running" ] || fail "Container ${SERVICE_NAME} is not running"
-log "Container ${SERVICE_NAME} is confirmed running"
+[ "${container_state}" = "running" ] || fail "Container failed to start"
 
-log "Waiting for Seafile to initialise (first-run DB migration may take up to 5 minutes)..."
-if ! wait_for_local_seafile_health 100 3; then
-  log "Seafile local health check did not pass in time; dumping diagnostics"
-  sudo ss -lntp | grep -E "(:${PUBLISHED_HTTP_PORT}[[:space:]]|:${PUBLISHED_HTTP_PORT}$)" || true
-  sudo docker logs "${SERVICE_NAME}" | tail -30 || true
-  sudo docker logs core-seafile-db | tail -20 || true
-  fail "Seafile local health check failed"
+log "Waiting for Seafile initialization..."
+if ! wait_for_local_seafile_health 120 5; then
+  log "Health check failed. Dumping logs:"
+  sudo docker logs "${SERVICE_NAME}" | tail -50 || true
+  fail "Seafile failed to become healthy"
 fi
-log "Seafile local health check passed"
 
-log "[5/7] Provisioning TLS material for ${DOMAIN}"
-log "Installing mkcert root CA..."
+log "[5/7] Provisioning TLS certificates"
 mkcert -install
-log "mkcert root CA installed"
-
-log "Generating TLS certificate and key for ${DOMAIN}..."
 tmp_cert="$(mktemp /tmp/core-seafile-cert.XXXXXX.pem)"
 tmp_key="$(mktemp /tmp/core-seafile-key.XXXXXX.pem)"
 mkcert -cert-file "${tmp_cert}" -key-file "${tmp_key}" "${DOMAIN}"
-log "TLS certificate generated at ${tmp_cert}"
-log "TLS key generated at ${tmp_key}"
 
-log "Installing TLS material into ${NGINX_SSL_DIR}..."
 sudo mkdir -p "${NGINX_SSL_DIR}"
 sudo mv -f "${tmp_cert}" "${NGINX_CERT_FILE}"
 sudo mv -f "${tmp_key}" "${NGINX_KEY_FILE}"
 sudo chmod 640 "${NGINX_CERT_FILE}"
 sudo chmod 600 "${NGINX_KEY_FILE}"
-log "TLS certificate installed at ${NGINX_CERT_FILE}"
-log "TLS key installed at ${NGINX_KEY_FILE}"
+log "TLS certificates installed"
 
-log "[6/7] Writing and validating Nginx ingress for ${DOMAIN}"
+log "[6/7] Configuring Nginx"
 write_nginx_site
-
-log "Symlinking ${NGINX_SITE_FILE} to ${NGINX_SITE_LINK}..."
 sudo ln -sfn "${NGINX_SITE_FILE}" "${NGINX_SITE_LINK}"
-log "Nginx site symlink created"
-
-log "Testing Nginx configuration..."
 sudo nginx -t
-log "Nginx configuration test passed"
-
-log "Restarting Nginx to apply new site configuration..."
 sudo systemctl restart nginx
-log "Nginx restarted successfully"
+log "Nginx configured and restarted"
 
-log "[7/7] Verifying mesh DNS and ingress runtime health"
-log "Resolving ${DOMAIN} via getent..."
+log "[7/7] Validating deployment"
 resolved_ip="$(getent ahostsv4 "${DOMAIN}" | awk '{print $1}' | head -n1)"
-log "Resolved IP for ${DOMAIN}: ${resolved_ip:-<empty>}"
 [ -n "${resolved_ip}" ] || fail "DNS resolution failed for ${DOMAIN}"
 validate_resolved_ip "${resolved_ip}"
 
-log "Testing ingress at https://${DOMAIN}/..."
 ingress_response="$(curl --silent --show-error --insecure -w "\nHTTP_CODE:%{http_code}" \
   --resolve "${DOMAIN}:443:${NETBIRD_DEVICE_IP}" \
   "https://${DOMAIN}/" 2>&1)" || true
 
-echo "${ingress_response}"
-
-log "Extracting HTTP status code from ingress response..."
 http_code="$(echo "${ingress_response}" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)"
-log "Ingress HTTP response code: ${http_code}"
-
 case "${http_code}" in
   200|301|302|303)
-    log "Ingress check passed with HTTP ${http_code}"
+    log "Ingress validated (HTTP ${http_code})"
     ;;
   *)
-    fail "Ingress health check failed on https://${DOMAIN}/ (HTTP ${http_code})"
+    fail "Ingress check failed (HTTP ${http_code})"
     ;;
 esac
 
 echo
-log "Deployment complete"
-log "Container status:     sudo docker ps --filter name=core-seafile"
-log "Seafile logs:         sudo docker logs -f ${SERVICE_NAME}"
-log "DB logs:              sudo docker logs -f core-seafile-db"
-log "Nginx error log:      sudo tail -50 /var/log/nginx/core-seafile.error.log"
-log "Ingress check:        curl -k https://${DOMAIN}/"
-log "MySQL root password:  sudo grep DB_ROOT_PASSWD ${COMPOSE_FILE}"
+log "✓ Deployment complete"
+log "Access Seafile at: https://${DOMAIN}/"
+log "Useful commands:"
+log "  Container status: sudo docker ps --filter name=core-seafile"
+log "  View logs:        sudo docker logs -f core-seafile"
+log "  View database:    sudo docker logs -f core-seafile-db"
+log "  Database password: sudo grep DB_ROOT_PASSWD ${COMPOSE_FILE}"
