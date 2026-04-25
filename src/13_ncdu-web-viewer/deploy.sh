@@ -146,6 +146,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-minimal \
     python3-requests \
     ca-certificates \
+    curl \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app && cat > /app/ncdu_http.py <<'PYEOF'
